@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0B0D0A">
+<title>고스트 릴레이</title>
+<style>
+/*__CSS__*/
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="game" aria-label="고스트 릴레이 게임 화면"></canvas>
+  <div id="ui">
+
+    <!-- 타이틀 -->
+    <section id="scr-title" class="screen">
+      <div class="corner">
+        <button class="icon" id="btn-howto" aria-label="하는 법">?</button>
+        <button class="icon" id="btn-sound" aria-label="소리 켜기/끄기">♪</button>
+      </div>
+      <div class="corner-left">
+        <div class="badge" id="today-badge">오늘의 맵</div>
+        <div class="lvl-chip" id="title-level"></div>
+      </div>
+      <div class="title-bottom">
+        <div class="title-btns">
+          <button class="btn primary" id="btn-new">혼자 달리기 · 새 릴레이</button>
+          <button class="btn outline" id="btn-code">친구 코드 넣기</button>
+          <div class="row">
+            <button class="btn outline" id="btn-multi">같이 달리기 <span class="sub">2~4명</span></button>
+            <button class="btn outline" id="btn-me">내 기록</button>
+          </div>
+        </div>
+        <div class="small" id="title-hint">친구에게 받은 코드는 어디서든 붙여넣기(Ctrl+V)만 해도 열려요</div>
+      </div>
+    </section>
+
+    <!-- 새 릴레이 설정 -->
+    <section id="scr-setup" class="screen dim">
+      <div class="card scroll">
+        <h2>새 릴레이</h2>
+        <div class="field-label">맵</div>
+        <div class="seg" id="seg-map">
+          <button data-v="0" class="on">오늘의 맵</button>
+          <button data-v="1">자유 맵</button>
+        </div>
+        <p class="muted small-p" id="map-info"></p>
+        <div class="field-label">난이도</div>
+        <div class="seg" id="seg-diff">
+          <button data-v="0">쉬움</button>
+          <button data-v="1" class="on">보통</button>
+          <button data-v="2">어려움</button>
+        </div>
+        <p class="muted small-p" id="diff-info"></p>
+        <div class="best-line" id="setup-best"></div>
+        <button class="btn primary" id="btn-setup-go">출발</button>
+        <button class="btn text" id="btn-setup-cancel">취소</button>
+      </div>
+    </section>
+
+    <!-- 닉네임 -->
+    <section id="scr-nick" class="screen dim">
+      <div class="card">
+        <h2 id="nick-title">닉네임 정하기</h2>
+        <p class="muted" id="nick-msg">유령 머리 위에 표시돼요. 한글·영문·숫자 1~6글자.</p>
+        <div class="nick-wrap"><input id="nick-input" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="done"><span id="nick-count">0/6</span></div>
+        <p class="warn">실명·학교·전화번호는 쓰지 마세요.</p>
+        <p class="err" id="nick-err"></p>
+        <button class="btn primary" id="btn-nick-ok">확인</button>
+        <button class="btn text" id="btn-nick-cancel">취소</button>
+      </div>
+    </section>
+
+    <!-- 도전 코드 넣기 -->
+    <section id="scr-code" class="screen dim">
+      <div class="card scroll">
+        <h2>친구 코드 넣기</h2>
+        <textarea id="code-input" rows="4" placeholder="친구에게 받은 코드(GR2.…)나 공유 문구를 통째로 붙여넣으세요" autocomplete="off" spellcheck="false"></textarea>
+        <button class="btn small-btn outline hidden" id="btn-paste">클립보드에서 붙여넣기</button>
+        <p class="err" id="code-err"></p>
+        <div id="code-preview" class="preview hidden"></div>
+        <button class="btn primary hidden" id="btn-code-go">유령들과 출발</button>
+        <button class="btn outline hidden" id="btn-code-watch">완주 기록 보기</button>
+        <button class="btn outline hidden" id="btn-code-newsame">같은 맵으로 새 릴레이</button>
+        <button class="btn text" id="btn-code-back">돌아가기</button>
+      </div>
+    </section>
+
+    <!-- 같이 달리기 설정 -->
+    <section id="scr-multi" class="screen dim">
+      <div class="card scroll">
+        <h2>같이 달리기</h2>
+        <p class="muted small-p">한 화면에서 2~4명이 동시에 달려요. 각자 자기 줄을 탭하거나 자기 키를 누르면 점프! 끝나면 모두의 기록이 하나의 릴레이 코드가 돼요.</p>
+        <div class="field-label">인원</div>
+        <div class="seg" id="seg-players">
+          <button data-v="2" class="on">2명</button>
+          <button data-v="3">3명</button>
+          <button data-v="4">4명</button>
+        </div>
+        <div id="multi-names" class="mnames"></div>
+        <div class="field-label">맵 · 난이도</div>
+        <div class="seg" id="seg-mmap">
+          <button data-v="0" class="on">오늘의 맵</button>
+          <button data-v="1">자유 맵</button>
+        </div>
+        <div class="seg" id="seg-mdiff">
+          <button data-v="0">쉬움</button>
+          <button data-v="1" class="on">보통</button>
+          <button data-v="2">어려움</button>
+        </div>
+        <p class="tip">가로 화면에서 하면 더 넓게 보여요.</p>
+        <p class="err" id="multi-err"></p>
+        <button class="btn primary" id="btn-multi-go">다 같이 출발</button>
+        <button class="btn text" id="btn-multi-cancel">취소</button>
+      </div>
+    </section>
+
+    <!-- 내 기록 -->
+    <section id="scr-me" class="screen dim">
+      <div class="card scroll">
+        <h2>내 기록</h2>
+        <div class="lvl-box">
+          <div class="lvl-top"><b id="me-level">Lv 1</b><span id="me-xp"></span></div>
+          <div class="bar"><i id="me-bar"></i></div>
+          <div class="muted small-p" id="me-next"></div>
+        </div>
+        <div class="field-label">오늘의 미션 <span class="sub" id="me-mis-sub"></span></div>
+        <ul class="missions" id="me-missions"></ul>
+        <div class="field-label">모자 고르기 <span class="sub">레벨이 오르면 새 모자가 열려요</span></div>
+        <div class="hats" id="me-hats"></div>
+        <div class="field-label">누적 기록</div>
+        <div class="stats" id="me-stats"></div>
+        <div class="field-label">맵별 최고 점수</div>
+        <ul class="bests" id="me-bests"></ul>
+        <div class="field-label">내가 달린 릴레이 <span class="sub">코드를 다시 복사할 수 있어요</span></div>
+        <ul class="hist" id="me-hist"></ul>
+        <button class="btn text" id="btn-me-nick">닉네임 바꾸기</button>
+        <button class="btn primary" id="btn-me-back">돌아가기</button>
+      </div>
+    </section>
+
+    <!-- 하는 법 -->
+    <section id="scr-howto" class="screen dim">
+      <div class="card scroll">
+        <h2>하는 법</h2>
+        <div class="how"><canvas class="how-cv" id="how1" width="96" height="48"></canvas>
+          <p><b>탭</b>하면 점프, 공중에서 <b>한 번 더 탭</b>하면 <b>2단 점프</b>! 높은 상자·간판, 높은 발판, 하늘의 별은 2단 점프로만 닿아요. PC는 스페이스·위 화살표·클릭.</p></div>
+        <div class="how"><canvas class="how-cv" id="how2" width="96" height="48"></canvas>
+          <p>40초를 달리면 내 플레이가 <b>유령</b>이 되어 <b>코드</b>로 나와요. 다음 주자에게 보내거나, 결과 화면에서 <b>이 기기로 다음 주자</b>를 바로 달리게 할 수 있어요. 10명이면 <b>릴레이 완주!</b></p></div>
+        <div class="how"><canvas class="how-cv" id="how3" width="96" height="48"></canvas>
+          <p>점수 = 거리(m) + 별×5 + <b class="cy">싱크</b>×3 + <b class="gd">구조</b>×10<br>
+          <b class="cy">싱크</b>: 유령과 같은 순간에 점프 · <b class="gd">구조</b>: 앞 주자 아무도 못 먹은 <b class="gd">금색 별</b> 먹기</p></div>
+        <p class="muted small-p">부딪혀도 죽지 않고 잠깐 멈칫해요. 레벨이 오르면 모자가 열리고, 매일 미션 3개가 바뀌어요.</p>
+        <button class="btn primary" id="btn-howto-ok">알겠어요</button>
+      </div>
+    </section>
+
+    <!-- 결과 -->
+    <section id="scr-result" class="screen dim">
+      <div class="card scroll" id="result-card">
+        <div class="res-head">
+          <div class="res-title" id="res-title">완주!</div>
+          <div class="res-sub" id="res-sub"></div>
+        </div>
+        <ol class="rank" id="res-rank"></ol>
+        <div class="badges" id="res-badges"></div>
+        <div class="xp-box hidden" id="res-xp"></div>
+        <div class="slots" id="res-slots"></div>
+        <div class="slots-cap" id="res-slots-cap">10명이 모이면 릴레이 완주!</div>
+        <button class="btn primary" id="btn-next">이 기기로 다음 주자 이어 달리기</button>
+        <div id="res-codebox">
+          <div class="code-label" id="res-code-label">코드</div>
+          <textarea id="res-code" readonly rows="3"></textarea>
+          <button class="btn outline" id="btn-copy-share">코드 + 공유 문구 복사</button>
+          <div class="row">
+            <button class="btn outline" id="btn-copy-code">코드만 복사</button>
+            <button class="btn outline hidden" id="btn-share">공유하기</button>
+          </div>
+          <p class="tip" id="res-code-tip">이 코드는 <b>다음 주자 한 명</b>에게 보내요. 여러 친구에게 보내면 각자 다른 갈래의 릴레이가 돼요.</p>
+        </div>
+        <button class="btn outline" id="btn-retry">다시 달리기</button>
+        <button class="btn outline hidden" id="btn-res-newsame">같은 맵으로 새 릴레이</button>
+        <div class="row">
+          <button class="btn text" id="btn-res-code">친구 코드 넣기</button>
+          <button class="btn text" id="btn-res-title">타이틀로</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 무효 처리 -->
+    <section id="scr-void" class="screen dim">
+      <div class="card">
+        <h2>이번 판은 기록되지 않았어요</h2>
+        <p class="muted">달리는 중에 화면이 바뀌거나 가려졌어요. 모두가 같은 40초를 달리도록 이번 판은 무효로 했어요.</p>
+        <button class="btn primary" id="btn-void-retry">다시 달리기</button>
+        <button class="btn text" id="btn-void-title">타이틀로</button>
+      </div>
+    </section>
+
+  </div>
+  <div id="toast" role="status" aria-live="polite"></div>
+</div>
+<script>
+/*__CORE__*/
+</script>
+<script>
+/*__APP__*/
+</script>
+</body>
+</html>
