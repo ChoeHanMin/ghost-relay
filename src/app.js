@@ -124,9 +124,11 @@
   }
   function dailySeed() { return GR.seedForDate(kstYmd()); }
   function randId() { return Math.floor(Math.random() * 65536); }
-  function mapKey(relay) { return (relay.mapType === 0 ? 'm' + relay.seed : 'free') + '_' + relay.diff; }
+  function mapKey(relay) { return (relay.mapType === 0 ? 'm' + relay.seed : 'free') + '_' + relay.diff + ((relay.ver || C.VERSION) >= 3 ? '' : '_v2'); }
+  function newRelay(seed, mapType, diff, coop) { return { ver: C.VERSION, seed: seed >>> 0, mapType: mapType, coop: coop ? 1 : 0, diff: diff, relayId: randId(), runners: [] }; }
+  function relayMap(r) { return GR.getMap(r.seed, r.diff, r.ver || C.VERSION); }
   function mapLabel(relay) {
-    return (relay.mapType === 0 ? (relay.seed === dailySeed() ? '오늘의 맵' : '날짜 맵') + ' · ' + GR.mapName(relay.seed) : '자유 맵') + ' · ' + DIFF[relay.diff].name;
+    return (relay.mapType === 0 ? (relay.seed === dailySeed() ? '오늘의 맵' : '날짜 맵') + ' · ' + GR.mapName(relay.seed) : '자유 맵') + ' · ' + DIFF[relay.diff].name + (relay.coop ? ' · 협동' : '');
   }
 
   /* ---------- 성장: 레벨 · 미션 · 모자 · 기록 ---------- */
@@ -159,13 +161,17 @@
     }
     function today() { var y = kstYmd(); if (p.mis.d !== y) p.mis = { d: y, done: [] }; return p.mis; }
     function addRun(res, info) {
-      var before = lvInfo(p.xp).lv, gain = Math.max(0, res.score), done = [], st = today();
+      var before = lvInfo(p.xp).lv, gain = Math.max(0, res.score + (res.team || 0)), done = [], st = today();
       missions(st.d).forEach(function (m) {
         if (st.done.indexOf(m.id) < 0 && m.ok(res, info)) { st.done.push(m.id); gain += MISSION_XP; done.push(m.text); }
       });
       p.xp += gain; p.runs++; p.stars += res.stars; p.dist += res.distance; p.syncs += res.syncs; p.rescues += res.rescues; p.doubles += res.doubles;
       var prev = p.best[info.key] ? p.best[info.key].s : 0, newBest = res.score > prev;
-      if (newBest) p.best[info.key] = { s: res.score, label: info.label };
+      if (newBest) {
+        p.best[info.key] = { s: res.score, label: info.label, inputs: info.inputs || null };
+        var ks = Object.keys(p.best); // 오래된 유령 기록은 30개까지만
+        if (ks.length > 30) ks.sort(function (a, b) { return p.best[a].s - p.best[b].s; }).slice(0, ks.length - 30).forEach(function (k) { if (p.best[k].inputs) p.best[k].inputs = null; });
+      }
       var after = lvInfo(p.xp).lv, hats = [];
       for (var i = 0; i < 10; i++) if (hatLv(i) > before && hatLv(i) <= after) hats.push(i);
       save();
@@ -211,7 +217,8 @@
     me: { B: '#C6F432', b: '#7A9A1C', F: '#1E2A0A', W: '#FFFFFF', P: '#0B0D0A', L: '#7A9A1C' },
     ghost: { B: '#7FE7FF', b: '#3FA8C8', F: '#123C48', W: '#FFFFFF', P: '#0B0D0A', L: '#3FA8C8' },
     gold: { B: '#FFD34D', b: '#C99A1E', F: '#4A3A0A', W: '#FFFFFF', P: '#0B0D0A', L: '#C99A1E' },
-    bot: { B: '#8A8F85', b: '#5E625A', F: '#2A2C28', W: '#D8DAD5', P: '#0B0D0A', L: '#5E625A' }
+    bot: { B: '#8A8F85', b: '#5E625A', F: '#2A2C28', W: '#D8DAD5', P: '#0B0D0A', L: '#5E625A' },
+    self: { B: '#C59BFF', b: '#8A5FD0', F: '#2E1A4A', W: '#FFFFFF', P: '#0B0D0A', L: '#8A5FD0' }
   };
   var STAR = ['...YY...', '..YYYY..', 'YYYYYYYY', '.YYYYYY.', '..YYYY..', '.YY..YY.', 'YY....YY', '........'];
   var sprites = {}, starSprite = null, starGold = null;
@@ -330,6 +337,39 @@
       cx.fillStyle = 'rgba(255,107,107,0.35)'; cx.fillRect(sx, GY + 2, w, 1);
     }
   }
+  function drawBridges(map, camX, ctx, names) {
+    if (!ctx || !ctx.bridged) return;
+    for (var i = 0; i < map.holes.length; i++) {
+      if (!ctx.bridged[i]) continue;
+      var h = map.holes[i]; if (h.x1 < camX || h.x0 > camX + VIS.w) continue;
+      var x = Math.round(h.x0 - camX), w = h.x1 - h.x0;
+      cx.globalAlpha = 0.55 + 0.15 * Math.sin(G.time / 300);
+      cx.fillStyle = '#7FE7FF'; cx.fillRect(x - 2, GY - 1, w + 4, 3);
+      cx.fillStyle = 'rgba(127,231,255,0.25)'; cx.fillRect(x, GY + 2, w, 6);
+      cx.globalAlpha = 1;
+      var who = names && names[ctx.bridgeBy[i]];
+      if (who) krText(who + '의 발판', x + w / 2, GY + 14, 6.5, '#7FE7FF', 'center', true);
+    }
+  }
+  function drawFinale(map, camX) {
+    if (!map.finaleX || map.finaleX < 0) return;
+    var x = Math.round(map.finaleX - camX);
+    if (x < -60 || x > VIS.w + 60) return;
+    cx.fillStyle = '#3A3F35'; cx.fillRect(x + 2, GY - 92, 2, 92);
+    cx.fillStyle = '#2A220A'; cx.fillRect(x - 22, GY - 108, 50, 16);
+    var on = (Math.floor(G.time / 200) % 2) === 0;
+    cx.fillStyle = on ? '#FFD34D' : '#B8902A';
+    cx.fillRect(x - 22, GY - 108, 50, 1); cx.fillRect(x - 22, GY - 93, 50, 1);
+    pxText('FINAL', x + 3, GY - 104, 1, on ? '#FFD34D' : '#B8902A', 'center');
+  }
+  function drawMarks(marks, camX) {
+    if (!marks) return;
+    for (var i = 0; i < marks.length; i++) {
+      var x = Math.round(marks[i] - camX); if (x < -20 || x > VIS.w + 20) continue;
+      cx.fillStyle = 'rgba(197,155,255,0.8)'; cx.fillRect(x + 5, GY - 22, 2, 9); cx.fillRect(x + 5, GY - 11, 2, 2);
+      krText('지난번 꽈당', x + 6, GY - 28, 6, '#C59BFF', 'center', true);
+    }
+  }
   function drawPlats(map, camX) {
     var P = map.plats;
     for (var i = 0; i < P.length; i++) {
@@ -406,7 +446,17 @@
     cx.fillText(text, Math.round(sx), sy);
   }
   function frameAt(fr, i) { i = Math.max(0, Math.min(C.RUN_TICKS, i)); return { x: fr.x[i] / FP, y: fr.y[i] / FP, st: fr.st[i] }; }
-  function ghostColor(g) { return g.kind === 'gold' ? '#FFD34D' : g.kind === 'bot' ? '#8A8F85' : '#7FE7FF'; }
+  function ghostColor(g) { return g.kind === 'gold' ? '#FFD34D' : g.kind === 'bot' ? '#8A8F85' : g.kind === 'self' ? '#C59BFF' : '#7FE7FF'; }
+  // 유령의 틱별 개인 점수(거리 + 별) — 결과와 같은 기준으로 실시간 순위를 매긴다
+  function personalTrack(fr) {
+    var a = new Int16Array(C.RUN_TICKS + 1), stars = 0;
+    for (var i = 0; i <= C.RUN_TICKS; i++) {
+      if (fr.fl[i] & F.STAR) stars++;
+      a[i] = Math.max(0, Math.floor((fr.x[i] - C.START_X * FP) / (C.PX_PER_M * FP))) + stars * C.PTS_STAR;
+    }
+    return a;
+  }
+  function liveScore(run) { return GR.scoreOf(run); }
   function drawGhosts(list, t, camX, showTags, tags) {
     for (var gi = list.length - 1; gi >= 0; gi--) {
       var g = list[gi], f = frameAt(g.frames, t), alpha = g.kind === 'bot' ? 0.45 : 0.55;
@@ -493,8 +543,11 @@
     drawBackground(sc.camX, G.time, yTop, yBot);
     if (sc.speedT !== undefined) speedLines(sc.speedT, sc.camX, sc.map.diff);
     drawGround(sc.map, sc.camX, yBot);
+    drawBridges(sc.map, sc.camX, sc.bridges, sc.bridgeNames);
+    drawFinale(sc.map, sc.camX);
     drawPlats(sc.map, sc.camX);
     drawObstacles(sc.map, sc.camX, G.time);
+    drawMarks(sc.marks, sc.camX);
     if (sc.ghosts) drawGhosts(sc.ghosts, sc.t, sc.camX, sc.tags, tags);
     if (sc.others) sc.others.forEach(function (o) { drawRunner('ghost', o.hat, o.x, o.y, o.st, sc.camX, 0.3); });
     drawStars(sc.map, sc.camX, sc.got, sc.prior);
@@ -523,13 +576,23 @@
   };
   var botCache = {};
   var BOT_DEF = [{ name: '연습봇 느림', skill: 0 }, { name: '연습봇 보통', skill: 1 }, { name: '연습봇 빠름', skill: 2 }];
-  function practiceBots(seed, diff) {
-    var key = seed + ':' + diff;
+  function practiceBots(seed, diff, ver) {
+    ver = ver || C.VERSION;
+    var key = seed + ':' + diff + ':' + ver;
     if (!botCache[key]) botCache[key] = BOT_DEF.map(function (b) {
-      var r = GR.simulate(seed, GR.botInputs(seed, b.skill, diff), null, true, diff);
-      return { name: b.name, hat: -1, kind: 'bot', frames: r.frames, score: r.score, distance: r.distance, isBot: true };
+      var r = GR.simulate(seed, GR.botInputs(seed, b.skill, diff, ver), null, true, diff, ver);
+      return { name: b.name, hat: -1, kind: 'bot', frames: r.frames, ps: personalTrack(r.frames), score: r.score, distance: r.distance, isBot: true };
     });
     return botCache[key];
+  }
+  // 이 맵·난이도에서 내 최고 기록이 있으면 그 기록의 유령을 만든다
+  function selfGhost(base) {
+    var b = Prog.p.best[mapKey(base)];
+    if (!b || !b.inputs || !b.inputs.length) return null;
+    var r = GR.simulate(relayMap(base), b.inputs, null, true);
+    var marks = [];
+    for (var i = 1; i <= C.RUN_TICKS; i++) if (r.frames.fl[i] & (F.STUMBLE | F.FALL)) marks.push(r.frames.x[i] / FP);
+    return { name: '내 최고 ' + r.score, hat: myHat(), kind: 'self', frames: r.frames, ps: personalTrack(r.frames), score: r.score, distance: r.distance, isBot: true, isSelf: true, marks: marks };
   }
   function setupDemo() {
     var seed = dailySeed();
@@ -586,12 +649,12 @@
     var x0 = Math.floor((W - gap * (n - 1) - 12) / 2);
     for (var i = 0; i < n; i++) {
       var hop = Math.max(0, Math.sin(G.time / 140 - i * 0.6)) * 10;
-      var kind = G.result.mineIdx === i ? 'me' : (G.result.leader === i ? 'gold' : 'ghost');
+      var kind = (G.result.mineIdx === i || G.result.multi) ? 'me' : (G.result.leader === i ? 'gold' : 'ghost');
       cx.globalAlpha = kind === 'me' ? 1 : 0.85;
       cx.drawImage(getSprite(kind, rs[i].hat, hop > 1 ? 'jump' : 'run' + ((G.frameNo >> 3) + i) % 4), x0 + i * gap, Math.round(46 - hop));
     }
     cx.globalAlpha = 1;
-    pxText('RELAY COMPLETE!', W / 2, 16, 2, '#FFD34D', 'center');
+    pxText(n >= 10 ? 'RELAY COMPLETE!' : n + ' RUNNERS!', W / 2, 16, 2, '#FFD34D', 'center');
     cx.fillStyle = '#4C5E22'; cx.fillRect(x0 - 8, 62, gap * (n - 1) + 28, 1);
   }
 
@@ -618,17 +681,23 @@
       run = G.run; t = run.t; camX = run.x / FP - L.PSX;
       var live = G.mode !== 'result';
       drawScene({ map: G.map, camX: camX, gsy: L.GSY, t: t, speedT: t, ghosts: G.ghosts, tags: live, got: run.got, prior: G.prior, fx: G.fx,
+        bridges: G.ctx, bridgeNames: G.base.runners.map(function (r) { return r.name; }), marks: G.self ? G.self.marks : null,
         me: { x: run.x / FP, y: run.y / FP, st: GR.stateBits(run), hat: G.myHat, name: G.runName } });
       screenMode();
       if (live) {
-        var dots = ghostDots(G.ghosts, t), ahead = 0;
+        var dots = ghostDots(G.ghosts, t), ahead = 0, my = liveScore(run);
         dots.push({ x: run.x, c: '#C6F432' });
-        for (var i = 0; i < G.ghosts.length; i++) if (G.ghosts[i].frames.x[t] > run.x) ahead++;
-        drawHUD(t, GR.scoreOf(run), G.ghosts.length ? (ahead + 1) + '/' + (G.ghosts.length + 1) : '', dots);
+        for (var i = 0; i < G.ghosts.length; i++) if (G.ghosts[i].ps[t] > my) ahead++;
+        drawHUD(t, my, G.ghosts.length ? (ahead + 1) + '/' + (G.ghosts.length + 1) : '', dots);
+        if (G.self) {
+          var dlt = my - G.self.ps[t];
+          krText('내 최고 기록보다 ' + (dlt >= 0 ? '+' : '') + dlt + '점', L.W - 10, 58, 8, dlt >= 0 ? '#C6F432' : '#C59BFF', 'right', true);
+        }
+        if (G.base.runners.length) krText('팀 점수 ' + (G.teamBase + GR.teamOf(run)), 10, 58, 8, '#7FE7FF', 'left', true);
       }
-      if (G.mode === 'countdown') drawCountdown('탭: 점프 · 공중에서 한 번 더: 2단 점프', '주자 ' + (G.base.runners.length + 1) + ' / 10 · ' + mapLabel(G.base));
+      if (G.mode === 'countdown') drawCountdown(G.base.coop && G.base.runners.length ? '협동: 앞 주자가 빠진 구덩이엔 유령 발판이 있어요' : G.self ? '보라색 유령 = 내 최고 기록. 이겨 보세요!' : '탭: 점프 · 공중에서 한 번 더: 2단 점프', '주자 ' + (G.base.runners.length + 1) + ' / 10 · ' + mapLabel(G.base));
       if (G.mode === 'result' || G.mode === 'void') { cx.fillStyle = 'rgba(11,13,10,0.5)'; cx.fillRect(0, 0, L.W, L.H); }
-      if (G.mode === 'result' && G.result && G.result.completed) drawParade();
+      if (G.mode === 'result' && G.result && G.result.milestone) drawParade();
     } else if (G.view === 'game' && G.kind === 'multi' && G.multi) {
       renderMulti(dt);
     } else if (G.view === 'watch' && G.watch) {
@@ -638,7 +707,7 @@
       if (G.mode === 'watch') {
         drawHUD(t, null, '', ghostDots(wv.ghosts, t));
         krText('완주 기록 다시보기 ' + GR.relayIdText(wv.relay.relayId), L.W / 2, 62, 8, '#7FE7FF', 'center', true);
-      } else { cx.fillStyle = 'rgba(11,13,10,0.5)'; cx.fillRect(0, 0, L.W, L.H); drawParade(); }
+      } else { cx.fillStyle = 'rgba(11,13,10,0.5)'; cx.fillRect(0, 0, L.W, L.H); if (G.result && G.result.milestone) drawParade(); }
     } else {
       cx.fillStyle = '#0B0D0A'; cx.fillRect(0, 0, L.W, L.H);
     }
@@ -780,7 +849,10 @@
     var d = DIFF[df];
     $('diff-info').textContent = d.name + ': 속도 ' + (d.s0 / 256).toFixed(1) + '→' + (d.s1 / 256).toFixed(1) + (df === 0 ? ' · 장애물 적음' : df === 2 ? ' · 연속 장애물이 빨리 나와요' : ' · 기본');
     var key = mapKey({ mapType: mt, seed: seed, diff: df }), b = Prog.p.best[key];
-    $('setup-best').textContent = b ? '이 맵·난이도 내 최고 점수: ' + b.s + '점' : '아직 기록 없음 — 첫 기록을 만들어 보세요!';
+    $('setup-best').textContent = b ? '이 맵·난이도 내 최고 점수: ' + b.s + '점' + (mt === 0 && b.inputs ? ' — 보라색 「내 최고」 유령과 재대결해요' : '') : '아직 기록 없음 — 첫 기록을 만들어 보세요!';
+    $('mode-info').textContent = segValue('seg-mode') === 1
+      ? '협동: 앞 주자가 빠진 구덩이에 그 주자의 유령 발판이 남아요(주자당 한 곳). 다음 사람은 밟고 지나가요. 순위보다 팀 점수가 중요해요.'
+      : '경쟁: 순위는 거리 + 별(개인 점수). 싱크·구조는 모두 함께 쌓는 팀 점수예요.';
   }
 
   /* ---------- 친구 코드 ---------- */
@@ -801,7 +873,7 @@
     var relay = res.relay, ev = GR.evaluateRelay(relay, false), order = GR.rankOrder(ev.results);
     pv.textContent = '';
     pv.appendChild(el('div', 'pv-head', '릴레이 ' + GR.relayIdText(relay.relayId) + ' · 주자 ' + relay.runners.length + '명 / 10'));
-    pv.appendChild(el('div', 'pv-map', mapLabel(relay)));
+    pv.appendChild(el('div', 'pv-map', mapLabel(relay) + ' · 팀 점수 ' + ev.team + (relay.coop ? ' · 앞 주자가 빠진 구덩이엔 유령 발판이 있어요' : '')));
     var ul = el('ul', 'pv-list');
     ev.results.forEach(function (r) {
       var li = el('li'), nm = el('span', 'nm');
@@ -849,18 +921,22 @@
   function beginAttempt(base, runName, joined) {
     G.kind = 'solo'; G.base = base; G.runName = runName; G.joined = !!joined;
     G.myHat = runName === G.name ? myHat() : (base.runners.length + 3) % 10;
-    G.map = GR.getMap(base.seed, base.diff); G.ctx = null; G.prior = null;
+    G.map = relayMap(base); G.ctx = null; G.prior = null; G.self = null; G.teamBase = 0; G.bridgeSeen = {};
     if (base.runners.length === 0) {
-      G.ghosts = practiceBots(base.seed, base.diff);
+      G.ghosts = practiceBots(base.seed, base.diff, base.ver);
+      if (runName === G.name) {
+        G.self = selfGhost(base);
+        if (G.self) G.ghosts = [G.self].concat(G.ghosts.slice(1));
+      }
     } else {
       var ev = GR.evaluateRelay(base, true), leader = GR.rankOrder(ev.results)[0].index;
-      G.ctx = ev.nextCtx; G.prior = ev.nextCtx.priorStars;
-      G.ghosts = ev.results.map(function (r) { return { name: r.name, hat: r.hat, kind: r.index === leader ? 'gold' : 'ghost', frames: r.frames, score: r.score }; });
+      G.ctx = ev.nextCtx; G.prior = ev.nextCtx.priorStars; G.teamBase = ev.team;
+      G.ghosts = ev.results.map(function (r) { return { name: r.name, hat: r.hat, kind: r.index === leader ? 'gold' : 'ghost', frames: r.frames, ps: personalTrack(r.frames), score: r.score }; });
     }
     G.maxX = 6000 * FP;
     G.ghosts.forEach(function (g) { G.maxX = Math.max(G.maxX, g.frames.x[C.RUN_TICKS]); });
     G.run = GR.createRun(G.map, G.ctx);
-    G.fx = makeFx(); tagRows = {};
+    G.fx = makeFx(); tagRows = {}; G.finaleShown = false;
     G.mode = 'countdown'; G.view = 'game'; G.cdStart = performance.now(); G.cdPhase = -1;
     resetInput(); show(null);
   }
@@ -879,6 +955,17 @@
     input.pending = false;
     GR.step(run, press);
     fxForRun(G.fx, run, true);
+    var fpx = run.x / FP;
+    if (G.map.finaleX > 0 && !G.finaleShown && fpx + 160 >= G.map.finaleX) { G.finaleShown = true; Sound.sfx('rescue'); popup(G.fx, fpx + 90, run.y / FP - 40, '피날레 별길! 위로 갈까?', '#FFD34D', true); }
+    if (G.ctx && G.ctx.bridged && run.grounded) {
+      var hs = G.map.holes, foot = fpx + 6;
+      for (var hi = Math.max(0, run.holeIdx - 1); hi < Math.min(hs.length, run.holeIdx + 2); hi++) {
+        if (G.ctx.bridged[hi] && !G.bridgeSeen[hi] && foot >= hs[hi].x0 && foot < hs[hi].x1) {
+          G.bridgeSeen[hi] = 1; Sound.sfx('plat');
+          popup(G.fx, fpx + 6, run.y / FP - 16, G.base.runners[G.ctx.bridgeBy[hi]].name + ' 발판 덕분에 통과!', '#7FE7FF', true);
+        }
+      }
+    }
     if (run.t >= C.RUN_TICKS - 300 && run.t < C.RUN_TICKS && run.t % 60 === 0) Sound.sfx('tick');
     var camX = run.x / FP - L.PSX;
     for (var i = 0; i < G.ghosts.length; i++) ghostFx(G.ghosts[i], run.t, camX);
@@ -894,17 +981,17 @@
   }
   function finishRun() {
     var base = G.base, rec = G.run.rec.slice();
-    var relay = { seed: base.seed, mapType: base.mapType, diff: base.diff, relayId: base.relayId, runners: base.runners.concat([{ name: G.runName, hat: G.myHat, inputs: rec }]) };
+    var relay = { ver: base.ver || C.VERSION, seed: base.seed, mapType: base.mapType, coop: base.coop ? 1 : 0, diff: base.diff, relayId: base.relayId, runners: base.runners.concat([{ name: G.runName, hat: G.myHat, inputs: rec }]) };
     var ev = GR.evaluateRelay(relay, false), mine = ev.results[ev.results.length - 1];
     if (mine.score !== GR.scoreOf(G.run)) console.warn('[ghost-relay] 재생 점수 불일치', mine.score, GR.scoreOf(G.run));
     var order = GR.rankOrder(ev.results), code = GR.encodeRelay(relay);
     var owner = G.runName === G.name, xp = null;
-    if (owner) xp = Prog.addRun(mine, { joined: G.joined, diff: relay.diff, key: mapKey(relay), label: mapLabel(relay) });
+    if (owner) xp = Prog.addRun(mine, { joined: G.joined, diff: relay.diff, key: mapKey(relay), label: mapLabel(relay), inputs: rec });
     Prog.addHist({ code: code, id: relay.relayId, seed: relay.seed, n: relay.runners.length, score: mine.score, label: (owner ? '' : G.runName + ' · ') + mapLabel(relay), date: kstYmd() });
     G.result = {
       relay: relay, ev: ev, mine: mine, mineIdx: relay.runners.length - 1, leader: order[0].index, xp: xp, owner: owner,
       completed: relay.runners.length >= C.MAX_RUNNERS, code: code, watch: false, multi: false,
-      bots: base.runners.length === 0 ? G.ghosts : [],
+      bots: base.runners.length === 0 ? G.ghosts : [], solo: base.runners.length === 0, self: G.self,
       prevBest: G.ghosts.filter(function (g) { return !g.isBot; }).reduce(function (m, g) { return Math.max(m, g.score); }, -1)
     };
     Sound.sfx(G.result.completed ? 'win' : 'go');
@@ -945,11 +1032,11 @@
     startMulti({ names: names, mapType: mt, seed: mt === 0 ? dailySeed() : (Math.random() * 4294967296) >>> 0, diff: segValue('seg-mdiff'), relayId: randId() });
   }
   function startMulti(cfg) {
-    var map = GR.getMap(cfg.seed, cfg.diff);
+    var map = GR.getMap(cfg.seed, cfg.diff, C.VERSION);
     G.kind = 'multi'; G.view = 'game';
     G.multi = {
       cfg: cfg, map: map,
-      relay: { seed: cfg.seed, mapType: cfg.mapType, diff: cfg.diff, relayId: cfg.relayId, runners: [] },
+      relay: { ver: C.VERSION, seed: cfg.seed, mapType: cfg.mapType, coop: 0, diff: cfg.diff, relayId: cfg.relayId, runners: [] },
       players: cfg.names.map(function (nm, i) { return { name: nm, hat: (nm === G.name ? myHat() : [0, 1, 3, 5][i]), run: GR.createRun(map, null), fx: makeFx() }; })
     };
     G.mode = 'countdown'; G.cdStart = performance.now(); G.cdPhase = -1;
@@ -973,7 +1060,7 @@
     var ev = GR.evaluateRelay(relay, false), order = GR.rankOrder(ev.results), code = GR.encodeRelay(relay);
     var ownerIdx = M.players.findIndex(function (p) { return p.name === G.name; }), xp = null;
     if (ownerIdx >= 0) {
-      xp = Prog.addRun(ev.results[ownerIdx], { joined: false, diff: relay.diff, key: mapKey(relay), label: mapLabel(relay) });
+      xp = Prog.addRun(ev.results[ownerIdx], { joined: false, diff: relay.diff, key: mapKey(relay), label: mapLabel(relay), inputs: relay.runners[ownerIdx].inputs });
     }
     Prog.addHist({ code: code, id: relay.relayId, seed: relay.seed, n: relay.runners.length, score: order[0].score, label: '같이 달리기 · ' + mapLabel(relay), date: kstYmd() });
     G.result = { relay: relay, ev: ev, mine: ownerIdx >= 0 ? ev.results[ownerIdx] : null, mineIdx: ownerIdx, leader: order[0].index, xp: xp, owner: ownerIdx >= 0,
@@ -986,7 +1073,8 @@
   function showResult() {
     var R = G.result, relay = R.relay, n = relay.runners.length, order = GR.rankOrder(R.ev.results);
     G.mode = 'result';
-    $('scr-result').classList.toggle('complete', R.completed);
+    R.milestone = [3, 5, 10].indexOf(n) >= 0;
+    $('scr-result').classList.toggle('complete', R.milestone);
     if (R.multi) {
       $('res-title').textContent = order[0].name + ' 우승!';
       $('res-sub').textContent = n + '명 같이 달리기 · ' + mapLabel(relay);
@@ -994,7 +1082,7 @@
       $('res-title').textContent = '완주 기록';
       $('res-sub').textContent = GR.relayIdText(relay.relayId) + ' · ' + mapLabel(relay) + ' · 10명';
     } else {
-      $('res-title').textContent = R.completed ? '릴레이 완주!' : '완주!';
+      $('res-title').textContent = R.completed ? '릴레이 완주!' : R.milestone ? n + '명 릴레이 달성!' : '완주!';
       $('res-sub').textContent = R.mine.name + ' ' + R.mine.score + '점 · 릴레이 ' + n + ' / 10 · ' + GR.relayIdText(relay.relayId);
     }
     var rank = $('res-rank'); rank.textContent = '';
@@ -1013,10 +1101,26 @@
       var nm = el('span', 'nm', R.multi ? pLabel(r.index, r.name) : r.name);
       if (isNew) nm.appendChild(el('span', 'tag new', 'NEW'));
       if (row.bot) nm.appendChild(el('span', 'tag bot', 'BOT'));
-      li.appendChild(nm); li.appendChild(el('span', 'sc', r.score + '점'));
+      var sc = el('span', 'sc', r.score + '점');
+      if (!row.bot && r.team) sc.appendChild(el('small', 'tm', ' 팀+' + r.team));
+      li.appendChild(nm); li.appendChild(sc);
       rank.appendChild(li);
     });
     var bd = $('res-badges'); bd.textContent = '';
+    var team = R.ev.team, cb = $('res-contrib'); cb.textContent = '';
+    $('res-team').textContent = n > 1 || R.multi ? '팀 점수 ' + team + ' — 싱크·구조로 모두 함께 쌓은 점수' : '';
+    if (!R.watch && R.mine) {
+      var me2 = R.mine, lines = [];
+      if (me2.rescues) lines.push(['gd', '친구들이 놓친 별 ' + me2.rescues + '개를 구조했어요 → 팀 +' + me2.rescues * C.PTS_RESCUE]);
+      if (me2.syncs) lines.push(['cy', '유령과 ' + me2.syncs + '번 같이 점프(싱크) → 팀 +' + me2.syncs * C.PTS_SYNC]);
+      if (relay.coop && me2.fallHole >= 0) lines.push(['cy', '내가 빠진 구덩이에 유령 발판을 남겼어요. 다음 주자는 거기서 안 빠져요']);
+      if (relay.coop && G.bridgeSeen && Object.keys(G.bridgeSeen).length && !R.multi) lines.push(['cy', '앞 주자의 유령 발판 ' + Object.keys(G.bridgeSeen).length + '개 덕분에 살았어요']);
+      if (R.self && me2.score < R.self.score) {
+        var gap = R.self.score - me2.score;
+        lines.push(['lm', gap <= 15 ? '별 ' + Math.ceil(gap / C.PTS_STAR) + '개만 더 먹었으면 최고 기록!' : '내 최고 기록까지 ' + gap + '점']);
+      } else if (R.self) lines.push(['lm', '내 최고 기록 유령을 이겼어요! (+' + (me2.score - R.self.score) + '점)']);
+      lines.forEach(function (l) { cb.appendChild(el('div', 'c-' + l[0], l[1])); });
+    }
     if (!R.watch && R.mine) {
       var m = R.mine;
       if (m.syncs) bd.appendChild(el('span', 'b-sync', '싱크 ' + m.syncs + '회'));
@@ -1046,14 +1150,18 @@
     $('res-code-tip').classList.toggle('hidden', R.completed);
     $('btn-share').classList.toggle('hidden', !navigator.share);
     $('btn-retry').classList.toggle('hidden', R.watch);
-    $('btn-retry').textContent = R.multi ? '같은 멤버로 다시 달리기' : '다시 달리기 (내 기록 바꾸기)';
+    var soloFirst = R.solo && !R.multi && !R.watch, card = $('result-card'), rb = $('btn-retry');
+    rb.textContent = R.multi ? '같은 멤버로 다시 달리기' : soloFirst ? '다시 도전' : '다시 달리기 (내 기록 바꾸기)';
+    rb.classList.toggle('primary', soloFirst); rb.classList.toggle('outline', !soloFirst);
+    $('btn-next').classList.toggle('primary', !soloFirst); $('btn-next').classList.toggle('outline', soloFirst);
+    card.insertBefore(rb, soloFirst ? $('res-team') : $('btn-res-newsame')); // 혼자 하던 판이면 '다시 도전'을 맨 위로
     $('btn-res-newsame').classList.toggle('hidden', !R.completed);
     show('result');
     $('result-card').scrollTop = 0;
   }
   function shareText() {
     var R = G.result, id = GR.relayIdText(R.relay.relayId), n = R.relay.runners.length, how = "saaskr 게임에서 '고스트 릴레이' 검색 → 친구 코드 넣기";
-    var who = R.mine ? R.mine.name + ' ' + R.mine.score + '점' : GR.rankOrder(R.ev.results)[0].name + ' 1등';
+    var who = (R.mine ? R.mine.name + ' ' + R.mine.score + '점' : GR.rankOrder(R.ev.results)[0].name + ' 1등') + (R.ev.team ? ', 팀 점수 ' + R.ev.team : '');
     var head = R.completed ? '👻 고스트 릴레이 ' + id + ' — 10명 릴레이 완주! ' + who
       : '👻 고스트 릴레이 ' + id + ' — ' + who + ', ' + n + '/10번째 주자까지 달렸어! (' + DIFF[R.relay.diff].name + ')';
     var line = (R.completed ? '완주 기록 다시보기: ' : '다음 주자는 너! 우리 유령 이길 수 있어? ') + (GAME_URL ? '아래 주소에서 「친구 코드 넣기」' : how);
@@ -1069,14 +1177,14 @@
   }
   function startWatch(relay) {
     var ev = GR.evaluateRelay(relay, true), order = GR.rankOrder(ev.results), leader = order[0].index;
-    G.watch = { relay: relay, map: ev.map, ev: ev, ghosts: ev.results.map(function (r) { return { name: r.name, hat: r.hat, kind: r.index === leader ? 'gold' : 'ghost', frames: r.frames, score: r.score }; }) };
+    G.watch = { relay: relay, map: ev.map, ev: ev, ghosts: ev.results.map(function (r) { return { name: r.name, hat: r.hat, kind: r.index === leader ? 'gold' : 'ghost', frames: r.frames, ps: personalTrack(r.frames), score: r.score }; }) };
     G.result = { relay: relay, ev: ev, mine: null, mineIdx: -1, leader: leader, completed: true, code: GR.encodeRelay(relay), watch: true, multi: false, bots: [], prevBest: -1, xp: null };
     G.maxX = 6000 * FP; G.watch.ghosts.forEach(function (g) { G.maxX = Math.max(G.maxX, g.frames.x[C.RUN_TICKS]); });
     G.watchT = 0; G.mode = 'watch'; G.view = 'watch'; G.kind = 'solo'; G.fx = makeFx(); tagRows = {};
     show(null);
   }
   function newSameMap(relay) {
-    ensureName(function () { attempt({ seed: relay.seed, mapType: relay.mapType, diff: relay.diff, relayId: randId(), runners: [] }, G.name, false); });
+    ensureName(function () { var r = newRelay(relay.seed, relay.mapType, relay.diff, relay.coop); r.ver = relay.ver || C.VERSION; attempt(r, G.name, false); });
   }
 
   /* ---------- 내 기록 ---------- */
@@ -1152,11 +1260,12 @@
   /* ---------- 이벤트 ---------- */
   function on(id, fn) { $(id).addEventListener('click', function (e) { Sound.unlock(); Sound.sfx('ui'); fn(e); }); }
   on('btn-new', openSetup);
-  segBind('seg-map', refreshSetup); segBind('seg-diff', refreshSetup);
+  segBind('seg-map', refreshSetup); segBind('seg-diff', refreshSetup); segBind('seg-mode', refreshSetup);
   on('btn-setup-go', function () {
     var mt = segValue('seg-map'), df = segValue('seg-diff');
     store.set('diff', df);
-    ensureName(function () { attempt({ seed: mt === 0 ? dailySeed() : (Math.random() * 4294967296) >>> 0, mapType: mt, diff: df, relayId: randId(), runners: [] }, G.name, false); }, openSetup);
+    var md = segValue('seg-mode');
+    ensureName(function () { attempt(newRelay(mt === 0 ? dailySeed() : (Math.random() * 4294967296) >>> 0, mt, df, md), G.name, false); }, openSetup);
   });
   on('btn-setup-cancel', enterTitle);
   on('btn-code', function () { openCode(''); });
@@ -1286,10 +1395,10 @@
     function ok(name, cond) { out.push((cond ? 'ok   ' : 'FAIL ') + name); }
     var inp = GR.botInputs(seed, 1, 1), a = GR.simulate(seed, inp, null, false, 1), b = GR.simulate(seed, inp, null, false, 1);
     ok('결정적 재생', a.score === b.score && a.distance === b.distance);
-    var run = GR.createRun(GR.getMap(seed, 2), null);
+    var run = GR.createRun(GR.getMap(seed, 2, C.VERSION), null);
     while (run.t < C.RUN_TICKS) GR.step(run, rng() % 12 === 0);
-    ok('실플레이 → 재생 일치', GR.simulate(seed, run.rec, null, false, 2).score === GR.scoreOf(run));
-    var relay = { seed: seed, mapType: 0, diff: 1, relayId: 0xA7F2, runners: [{ name: '테스트', hat: 1, inputs: inp }] };
+    ok('실플레이 → 재생 일치', GR.simulate(seed, run.rec, null, false, 2, C.VERSION).score === GR.scoreOf(run));
+    var relay = { ver: C.VERSION, seed: seed, mapType: 0, coop: 0, diff: 1, relayId: 0xA7F2, runners: [{ name: '테스트', hat: 1, inputs: inp }] };
     var dec = GR.decodeRelay(GR.encodeRelay(relay));
     ok('코드 왕복', dec.ok && JSON.stringify(dec.relay) === JSON.stringify(relay));
     ok('변조 거절', !GR.decodeRelay(GR.encodeRelay(relay).slice(0, -3)).ok);

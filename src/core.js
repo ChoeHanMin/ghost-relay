@@ -67,7 +67,7 @@ var GR = (function () {
 
   /* ---------- 2. constants ---------- */
   var C = {
-    VERSION: 2,            // 코드 형식 + 물리값 버전 (물리값을 바꾸면 반드시 올릴 것)
+    VERSION: 3,            // 코드 형식 버전. v2 코드도 읽고, v2 맵 생성 규칙으로 재생한다
     FP: 256,               // 1px = 256 단위
     TPS: 60, RUN_TICKS: 2400,             // 40초
     GROUND_Y: 320,
@@ -94,13 +94,16 @@ var GR = (function () {
 
   /* ---------- 3. map ---------- */
   var mapCache = {};
-  function getMap(seed, diff) {
-    seed = seed >>> 0; diff = diff === undefined ? 1 : diff;
-    var key = seed + ':' + diff;
-    if (!mapCache[key]) mapCache[key] = generateMap(seed, diff);
+  function getMap(seed, diff, mapVer) {
+    seed = seed >>> 0; diff = diff === undefined ? 1 : diff; mapVer = mapVer || C.VERSION;
+    var key = seed + ':' + diff + ':' + mapVer;
+    if (!mapCache[key]) mapCache[key] = generateMap(seed, diff, mapVer);
     return mapCache[key];
   }
-  function generateMap(seed, diff) {
+  // 장애물 없이 달렸을 때 t틱에 도착하는 x(px)
+  function xAtTick(T, diff) { var x = C.START_X * FP; for (var t = 0; t < T; t++) x += speedAt(t, diff); return Math.floor(x / FP); }
+  function generateMap(seed, diff, mapVer) {
+    mapVer = mapVer || C.VERSION;
     var rng = mulberry32((seed ^ 0x9E3779B9 ^ Math.imul(diff + 1, 0x85EBCA6B)) >>> 0);
     var G = C.GROUND_Y, obs = [], stars = [], holes = [], plats = [];
     function star(x, y) { stars.push({ x: x, y: y }); }
@@ -158,6 +161,31 @@ var GR = (function () {
         var s2 = b + 16 + 170; box(s2, 32, 8, 'spike'); star(s2 + 12, G - 42);
         return s2 - x + 32 + tail();
       },
+      route: function (x) { // 위험·보상 길: 아래는 별 적고 안전, 위는 발판을 이어 타면 별이 많음
+        var b = x + 90 + rint(rng, 20), n = 2 + rint(rng, 2), px = b, i, k;
+        for (i = 0; i < n; i++) {
+          var w = 80 + rint(rng, 3) * 16, h = 46 + rint(rng, 3) * 4;
+          plats.push({ x: px, y: G - h, w: w });
+          for (k = 10; k + 8 <= w - 4; k += 28) star(px + k, G - h - 12);
+          px += w + 40 + rint(rng, 16);
+        }
+        var mid = b + ((px - b) >> 1) - 8;
+        if (rint(rng, 2)) box(mid, 16, 16, 'low'); else box(mid - 8, 32, 8, 'spike');
+        star(b + 20, G - 12);
+        return px - x + 110 + rint(rng, 30);
+      },
+      finale: function (x, end) { // 마지막 약 8초: 위쪽 별길(위험·보상) + 아래쪽 장애물
+        var px = x + 60, i = 0;
+        while (px < end) {
+          var w = 96 + rint(rng, 3) * 16, h = 48 + (i % 2) * 8;
+          plats.push({ x: px, y: G - h, w: w });
+          for (var k = 10; k + 8 <= w - 4; k += 32) star(px + k, G - h - 12);
+          var under = px + (w >> 1) - 8;
+          if (i % 2 === 0) box(under, 16, 16, 'low'); else box(under - 8, 32, 8, 'spike');
+          px += w + 52 + rint(rng, 20); i++;
+        }
+        return px - x + 80;
+      },
       holelow: function (x) {
         var b = x + 100 + rint(rng, 20), w = 36 + rint(rng, 9);
         holes.push({ x0: b, x1: b + w }); star(b + (w >> 1) - 4, G - 40);
@@ -171,9 +199,14 @@ var GR = (function () {
       [['low', 1], ['spike', 1], ['holeW', 2], ['tall', 2], ['dbl', 2], ['sign', 1], ['air', 1], ['plat', 2]],
       [['lowspike', 2], ['holelow', 2], ['dbl', 1], ['tall', 1], ['sign', 1], ['air', 2], ['holeW', 1], ['plat', 2]]
     ];
-    var th = DIFF[diff].tiers, x = 200;
+    if (mapVer >= 3) { tiers[1].push(['route', 1]); tiers[2].push(['route', 2]); tiers[3].push(['route', 2]); }
+    var th = DIFF[diff].tiers, x = 200, finaleX = -1, finaleEnd = 0, finaleAt = -1;
+    if (mapVer >= 3) { finaleX = xAtTick(C.RUN_TICKS - 8 * C.TPS - 60, diff); finaleEnd = xAtTick(C.RUN_TICKS, diff) + 200; }
     x += chunk.flat(x);
     while (x < C.MAP_LEN) {
+      if (finaleX > 0 && x >= finaleX - 120) {
+        finaleAt = x + 60; x += chunk.finale(x, finaleEnd); finaleX = -1; continue;
+      }
       var tier = x < th[0] ? 0 : x < th[1] ? 1 : x < th[2] ? 2 : 3;
       var list = tiers[tier], total = 0, i;
       for (i = 0; i < list.length; i++) total += list[i][1];
@@ -183,7 +216,8 @@ var GR = (function () {
     }
     var byXY = function (a, b) { return a.x - b.x || a.y - b.y; };
     obs.sort(byXY); stars.sort(byXY);
-    return { seed: seed, diff: diff, obs: obs, stars: stars, holes: holes, plats: plats, length: x };
+    plats.sort(function (a, b) { return a.x - b.x; });
+    return { seed: seed, diff: diff, ver: mapVer, obs: obs, stars: stars, holes: holes, plats: plats, length: x, finaleX: finaleAt };
   }
   var ADJ = ['네온', '젖은', '조용한', '반짝이는', '새벽의', '비 오는', '잠든', '깜빡이는', '안개 낀', '한밤의', '푸른', '오래된'];
   var PLACE = ['골목', '옥상', '지하철', '놀이터', '항구', '시장', '다리', '정류장', '공터', '상가', '육교', '터널'];
@@ -198,7 +232,7 @@ var GR = (function () {
       stumble: 0, fall: 0, fallTo: 0,
       obsIdx: 0, starIdx: 0, holeIdx: 0, platIdx: 0,
       hit: new Uint8Array(map.obs.length), got: new Uint8Array(map.stars.length),
-      rec: [], stars: 0, syncs: 0, rescues: 0, stumbles: 0, falls: 0, jumps: 0, doubles: 0, platLands: 0,
+      rec: [], fallHole: -1, stars: 0, syncs: 0, rescues: 0, stumbles: 0, falls: 0, jumps: 0, doubles: 0, platLands: 0,
       flags: 0, lastSync: 0, probe: false, failed: false
     };
   }
@@ -237,7 +271,7 @@ var GR = (function () {
       if (jumped) {
         run.jumps++; run.flags |= F.JUMP;
         if (run.rec) run.rec.push(t);
-        if (run.ctx && run.ctx.syncArr[t]) { run.lastSync = run.ctx.syncArr[t]; run.syncs += run.lastSync; run.flags |= F.SYNC; }
+        if (run.ctx && run.ctx.syncArr[t]) { run.lastSync = run.ctx.syncArr[t]; run.syncs++; run.flags |= F.SYNC; } // 점프 한 번에 싱크 1회
       }
     }
 
@@ -256,6 +290,7 @@ var GR = (function () {
 
       var footPx = (run.x >> 8) + 6;
       var hole = holeUnder(run, footPx), pi = platUnder(run, footPx);
+      if (hole && run.ctx && run.ctx.bridged && run.ctx.bridged[run.holeIdx]) hole = null; // 앞 주자의 유령 발판
       if (run.grounded) {
         if (run.plat >= 0) { if (pi !== run.plat) { run.grounded = false; run.vy = 0; run.plat = -1; run.dblAvail = true; } }
         else if (hole) { run.grounded = false; run.vy = 0; run.dblAvail = false; }
@@ -275,6 +310,7 @@ var GR = (function () {
           } else if (run.y >= groundTop + 4 * FP) {
             if (run.probe) { run.failed = true; run.t++; return; }
             run.fall = C.FALL_TICKS; run.fallTo = hole.x1 * FP; run.falls++;
+            if (run.fallHole < 0) run.fallHole = run.holeIdx;
             run.stumble = 0; run.dblAvail = false;
             run.flags |= F.FALL;
           }
@@ -312,19 +348,19 @@ var GR = (function () {
     run.t++;
   }
   function distanceM(run) { return Math.max(0, Math.floor((run.x - C.START_X * FP) / (C.PX_PER_M * FP))); }
-  function scoreOf(run) {
-    return distanceM(run) + run.stars * C.PTS_STAR + run.syncs * C.PTS_SYNC + run.rescues * C.PTS_RESCUE;
-  }
+  /* 개인 점수 = 거리 + 별 (순위 기준) / 팀 점수 = 싱크 + 구조 (함께 만드는 점수) */
+  function scoreOf(run) { return distanceM(run) + run.stars * C.PTS_STAR; }
+  function teamOf(run) { return run.syncs * C.PTS_SYNC + run.rescues * C.PTS_RESCUE; }
   function stateBits(run) {
     return (run.grounded ? S.GROUND : 0) | (run.stumble > 0 ? S.STUMBLE : 0) | (run.fall > 0 ? S.FALL : 0) |
       (run.vy < 0 ? S.RISING : 0) | (!run.grounded && !run.dblAvail ? S.DOUBLE : 0);
   }
   function summary(run) {
-    return { score: scoreOf(run), distance: distanceM(run), stars: run.stars, syncs: run.syncs, rescues: run.rescues,
+    return { score: scoreOf(run), team: teamOf(run), distance: distanceM(run), fallHole: run.fallHole, stars: run.stars, syncs: run.syncs, rescues: run.rescues,
       stumbles: run.stumbles, falls: run.falls, jumps: run.jumps, doubles: run.doubles, platLands: run.platLands };
   }
-  function simulate(mapOrSeed, inputs, ctx, wantFrames, diff) {
-    var map = typeof mapOrSeed === 'object' ? mapOrSeed : getMap(mapOrSeed, diff);
+  function simulate(mapOrSeed, inputs, ctx, wantFrames, diff, mapVer) {
+    var map = typeof mapOrSeed === 'object' ? mapOrSeed : getMap(mapOrSeed, diff, mapVer);
     var run = createRun(map, ctx), p = 0, N = C.RUN_TICKS, fr = null;
     if (wantFrames) {
       fr = { x: new Int32Array(N + 1), y: new Int32Array(N + 1), st: new Uint8Array(N + 1), fl: new Uint16Array(N + 1) };
@@ -340,26 +376,28 @@ var GR = (function () {
     res.rec = run.rec; res.got = run.got; res.frames = fr;
     return res;
   }
-  function emptyCtx(map) { return { syncArr: new Uint8Array(C.RUN_TICKS), priorStars: new Uint8Array(map.stars.length) }; }
-  function addToCtx(ctx, res) {
+  function emptyCtx(map) { return { syncArr: new Uint8Array(C.RUN_TICKS), priorStars: new Uint8Array(map.stars.length), bridged: new Uint8Array(map.holes.length), bridgeBy: new Int8Array(map.holes.length).fill(-1) }; }
+  function addToCtx(ctx, res, coop, idx) {
     for (var j = 0; j < res.rec.length; j++) {
       var g = res.rec[j];
       for (var d = -C.SYNC_WINDOW; d <= C.SYNC_WINDOW; d++) { var k = g + d; if (k >= 0 && k < C.RUN_TICKS && ctx.syncArr[k] < 255) ctx.syncArr[k]++; }
     }
     for (var i = 0; i < res.got.length; i++) if (res.got[i]) ctx.priorStars[i] = 1;
+    if (coop && res.fallHole >= 0 && !ctx.bridged[res.fallHole]) { ctx.bridged[res.fallHole] = 1; ctx.bridgeBy[res.fallHole] = idx; }
   }
-  function copyCtx(ctx) { return { syncArr: ctx.syncArr.slice(), priorStars: ctx.priorStars.slice() }; }
+  function copyCtx(ctx) { return { syncArr: ctx.syncArr.slice(), priorStars: ctx.priorStars.slice(), bridged: ctx.bridged.slice(), bridgeBy: ctx.bridgeBy.slice() }; }
   /* 릴레이 전체를 달린 순서대로 재생해 각 주자의 점수를 계산한다 (점수는 코드에 없다). */
   function evaluateRelay(relay, wantFrames) {
-    var map = getMap(relay.seed, relay.diff), ctx = emptyCtx(map), results = [];
+    var map = getMap(relay.seed, relay.diff, relay.ver || C.VERSION), ctx = emptyCtx(map), results = [], coop = !!relay.coop;
     for (var i = 0; i < relay.runners.length; i++) {
       var ru = relay.runners[i];
       var res = simulate(map, ru.inputs, i === 0 ? null : copyCtx(ctx), wantFrames);
       res.name = ru.name; res.hat = ru.hat; res.index = i;
       results.push(res);
-      addToCtx(ctx, res);
+      addToCtx(ctx, res, coop, i);
     }
-    return { map: map, results: results, nextCtx: relay.runners.length ? ctx : null };
+    var team = 0; results.forEach(function (r) { team += r.team; });
+    return { map: map, results: results, team: team, nextCtx: relay.runners.length ? ctx : null };
   }
   function rankOrder(results) {
     return results.slice().sort(function (a, b) { return b.score - a.score || b.distance - a.distance || a.index - b.index; });
@@ -402,8 +440,8 @@ var GR = (function () {
   }
   /* skill: 0 느림, 1 보통, 2 빠름, 3 완벽 */
   var BOT_MISTAKE = [600, 350, 150, 0];
-  function botInputs(seed, skill, diff) {
-    var map = getMap(seed, diff), run = createRun(map, null);
+  function botInputs(seed, skill, diff, mapVer) {
+    var map = getMap(seed, diff, mapVer), run = createRun(map, null);
     var rng = mulberry32(hash32((seed ^ (0xB0770000 + skill * 7919 + (map.diff << 4))) >>> 0));
     var plan = null, second = -1, mistake = BOT_MISTAKE[skill];
     while (run.t < C.RUN_TICKS) {
@@ -431,8 +469,9 @@ var GR = (function () {
   var PREFIX = 'GR2.';
   var NAME_RE = /^[가-힣A-Za-z0-9]{1,6}$/;
   function encodeRelay(r) {
-    var b = [C.VERSION, (r.seed >>> 24) & 255, (r.seed >>> 16) & 255, (r.seed >>> 8) & 255, r.seed & 255,
-      r.mapType & 255, r.diff & 255, (r.relayId >> 8) & 255, r.relayId & 255, r.runners.length];
+    var ver = r.ver || C.VERSION;
+    var b = [ver, (r.seed >>> 24) & 255, (r.seed >>> 16) & 255, (r.seed >>> 8) & 255, r.seed & 255,
+      (r.mapType & 1) | (ver >= 3 && r.coop ? 2 : 0), r.diff & 255, (r.relayId >> 8) & 255, r.relayId & 255, r.runners.length];
     for (var i = 0; i < r.runners.length; i++) {
       var ru = r.runners[i], nb = utf8Encode(ru.name);
       if (nb.length > C.NAME_MAX_BYTES) throw new Error('name too long');
@@ -479,10 +518,10 @@ var GR = (function () {
     function u8() { if (p >= end) throw 'TRUNC'; return b[p++]; }
     function vint() { var n = 0, sh = 0, x; do { x = u8(); n += (x & 127) * Math.pow(2, sh); sh += 7; if (sh > 28) throw 'BAD'; } while (x & 128); return n; }
     try {
-      if (u8() !== 2) throw 'OLD';
+      var ver = u8(); if (ver < 2) throw 'OLD';
       var seed = ((u8() << 24) | (u8() << 16) | (u8() << 8) | u8()) >>> 0;
-      var mapType = u8(), diff = u8(), relayId = (u8() << 8) | u8(), N = u8();
-      if (N < 1 || N > C.MAX_RUNNERS || mapType > 1 || diff > 2) throw 'BAD';
+      var mb = u8(), mapType = mb & 1, coop = ver >= 3 && (mb & 2) ? 1 : 0, diff = u8(), relayId = (u8() << 8) | u8(), N = u8();
+      if (N < 1 || N > C.MAX_RUNNERS || mb > (ver >= 3 ? 3 : 1) || diff > 2) throw 'BAD';
       var runners = [];
       for (var i = 0; i < N; i++) {
         var nl = u8(); if (nl < 1 || nl > C.NAME_MAX_BYTES) throw 'BAD';
@@ -498,7 +537,7 @@ var GR = (function () {
         runners.push({ name: name, hat: hat, inputs: inputs });
       }
       if (p !== end) throw 'BAD';
-      return { ok: true, relay: { seed: seed, mapType: mapType, diff: diff, relayId: relayId, runners: runners }, completed: N >= C.MAX_RUNNERS };
+      return { ok: true, relay: { ver: ver, seed: seed, mapType: mapType, coop: coop, diff: diff, relayId: relayId, runners: runners }, completed: N >= C.MAX_RUNNERS };
     } catch (e) {
       return { ok: false, error: ERR[e] || ERR.BAD };
     }
@@ -510,7 +549,7 @@ var GR = (function () {
     C: C, F: F, S: S, DIFF: DIFF,
     mulberry32: mulberry32, hash32: hash32, crc16: crc16, b64urlEncode: b64urlEncode, b64urlDecode: b64urlDecode,
     getMap: getMap, generateMap: generateMap, mapName: mapName, seedForDate: seedForDate,
-    createRun: createRun, step: step, canJump: canJump, canDouble: canDouble, speedAt: speedAt, scoreOf: scoreOf, distanceM: distanceM,
+    createRun: createRun, step: step, canJump: canJump, canDouble: canDouble, speedAt: speedAt, scoreOf: scoreOf, teamOf: teamOf, xAtTick: xAtTick, distanceM: distanceM,
     summary: summary, stateBits: stateBits, simulate: simulate, evaluateRelay: evaluateRelay, rankOrder: rankOrder,
     botInputs: botInputs, encodeRelay: encodeRelay, decodeRelay: decodeRelay, relayIdText: relayIdText, validName: validName
   };

@@ -1,7 +1,7 @@
 # 고스트 릴레이 (GHOST RELAY)
 
 친구의 유령과 함께 달리는 40초 릴레이 러너. 2026 saaskr 게임 어워드 출품작.
-v2 변경 내역: [docs/feedback_v2.md](docs/feedback_v2.md)
+변경 내역: [v3](docs/feedback_v3.md) · [v2](docs/feedback_v2.md)
 설계 문서: [docs/ghost_relay_spec.md](docs/ghost_relay_spec.md)
 
 ## 출품 파일

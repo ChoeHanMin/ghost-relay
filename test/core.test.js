@@ -23,7 +23,7 @@ function livePlay(seed, diff, rng, ctx) {
 }
 const pick = r => ({ score: r.score, distance: r.distance, stars: r.stars, syncs: r.syncs, rescues: r.rescues, stumbles: r.stumbles, falls: r.falls, jumps: r.jumps, doubles: r.doubles });
 
-console.log('고스트 릴레이 core 테스트 (v2)');
+console.log('고스트 릴레이 core 테스트 (v3)');
 
 test('같은 시드·입력 → 100회 동일', () => {
   const rng = GR.mulberry32(7), inputs = randInputs(rng);
@@ -85,11 +85,54 @@ test('높은 발판: 점프+2단 점프로 올라설 수 있음', () => {
   assert.ok(lands > 0, '발판 착지 0회');
 });
 
+test('v3: 점수 분리 — 같은 입력이면 순서와 관계없이 개인 점수 동일', () => {
+  const seed = 4242, inp = GR.botInputs(seed, 2, 1);
+  const relay = { ver: 3, seed, mapType: 1, diff: 1, relayId: 1, runners: [0, 1, 2, 3].map(i => ({ name: 'P' + i, hat: i, inputs: inp })) };
+  const ev = GR.evaluateRelay(relay);
+  const ps = ev.results.map(r => r.score), ts = ev.results.map(r => r.team);
+  console.log('       개인 ' + ps.join('/') + ' · 팀 기여 ' + ts.join('/') + ' · 팀 합계 ' + ev.team);
+  assert.ok(ps.every(v => v === ps[0]), '개인 점수가 순서에 따라 달라짐');
+  assert.ok(ts[3] <= inp.length * C.PTS_SYNC + 200, '싱크는 점프당 1회');
+});
+
+test('v3 협동: 앞 주자가 빠진 구덩이에 유령 발판 → 다음 주자는 안 빠짐', () => {
+  let checked = 0;
+  for (let s = 0; s < 40 && checked < 5; s++) {
+    const seed = GR.hash32(s + 900), map = GR.getMap(seed, 1, 3);
+    if (!map.holes.length) continue;
+    const empty = [];   // 아무것도 안 누르면 첫 구덩이에 빠진다
+    const a = GR.simulate(map, empty, null);
+    if (a.fallHole < 0) continue;
+    const coop = { ver: 3, seed, mapType: 1, coop: 1, diff: 1, relayId: 1, runners: [{ name: 'A', hat: 0, inputs: empty }, { name: 'B', hat: 1, inputs: empty }] };
+    const comp = Object.assign({}, coop, { coop: 0 });
+    const ec = GR.evaluateRelay(coop), ek = GR.evaluateRelay(comp);
+    assert.notStrictEqual(ec.results[1].fallHole, a.fallHole, '협동인데 같은 구덩이에 또 빠짐');
+    assert.strictEqual(ek.results[1].fallHole, a.fallHole, '경쟁 모드에는 발판 없음');
+    const dec = GR.decodeRelay(GR.encodeRelay(coop));
+    assert.ok(dec.ok && dec.relay.coop === 1 && dec.relay.ver === 3);
+    checked++;
+  }
+  assert.ok(checked >= 3);
+});
+
+test('v3 맵: 피날레 별길이 마지막 8초 지점에 있고, v2 코드는 v2 맵으로 재생', () => {
+  for (let d = 0; d < 3; d++) {
+    const m = GR.getMap(77, d, 3);
+    assert.ok(m.finaleX > GR.xAtTick(C.RUN_TICKS - 9 * 60, d) - 200 && m.finaleX < GR.xAtTick(C.RUN_TICKS - 7 * 60, d));
+    assert.ok(m.plats.some(p => p.x >= m.finaleX), '피날레 발판');
+  }
+  assert.strictEqual(GR.getMap(77, 1, 2).finaleX, -1);
+  const r2 = { ver: 2, seed: 9, mapType: 0, diff: 1, relayId: 3, runners: [{ name: 'a', hat: 0, inputs: GR.botInputs(9, 1, 1, 2) }] };
+  const dec = GR.decodeRelay(GR.encodeRelay(r2));
+  assert.strictEqual(dec.relay.ver, 2);
+  assert.strictEqual(GR.evaluateRelay(dec.relay).results[0].distance, GR.simulate(9, r2.runners[0].inputs, null, false, 1, 2).distance);
+});
+
 test('인코딩 → 디코딩 1000개 원본과 동일', () => {
   const rng = GR.mulberry32(42), names = ['러너12', 'abc', '한글여섯글자', 'Z9', '유령'];
   for (let i = 0; i < 1000; i++) {
     const n = 1 + rng() % 10;
-    const relay = { seed: rng(), mapType: rng() % 2, diff: rng() % 3, relayId: rng() & 0xFFFF, runners: [] };
+    const relay = { ver: 3, seed: rng(), mapType: rng() % 2, coop: rng() % 2, diff: rng() % 3, relayId: rng() & 0xFFFF, runners: [] };
     for (let r = 0; r < n; r++) relay.runners.push({ name: names[rng() % names.length], hat: rng() % 10, inputs: randInputs(rng) });
     const dec = GR.decodeRelay(GR.encodeRelay(relay));
     assert.ok(dec.ok, dec.error);
@@ -99,7 +142,7 @@ test('인코딩 → 디코딩 1000개 원본과 동일', () => {
 });
 
 test('공유 문구째 / 공백 섞인 코드 해석, 예전 GR1 코드 안내', () => {
-  const relay = { seed: 777, mapType: 0, diff: 1, relayId: 0xA7F2, runners: [{ name: '러너07', hat: 3, inputs: GR.botInputs(777, 1, 1) }] };
+  const relay = { ver: 3, seed: 777, mapType: 0, coop: 0, diff: 1, relayId: 0xA7F2, runners: [{ name: '러너07', hat: 3, inputs: GR.botInputs(777, 1, 1) }] };
   const code = GR.encodeRelay(relay);
   assert.ok(GR.decodeRelay(`👻 고스트 릴레이 #A7F2 — 나 233점!\n${code}\n`).ok);
   assert.ok(GR.decodeRelay('GR2.' + code.slice(4).replace(/(.{4})/g, '$1 ')).ok);
@@ -109,7 +152,7 @@ test('공유 문구째 / 공백 섞인 코드 해석, 예전 GR1 코드 안내',
 
 test('한 글자 바꾸기·끝 자르기 → 거절', () => {
   const rng = GR.mulberry32(3);
-  const relay = { seed: 9, mapType: 1, diff: 2, relayId: 5, runners: [{ name: 'abc', hat: 1, inputs: randInputs(rng) }, { name: '유령', hat: 2, inputs: randInputs(rng) }] };
+  const relay = { ver: 3, seed: 9, mapType: 1, coop: 0, diff: 2, relayId: 5, runners: [{ name: 'abc', hat: 1, inputs: randInputs(rng) }, { name: '유령', hat: 2, inputs: randInputs(rng) }] };
   const code = GR.encodeRelay(relay);
   for (let i = 4; i < code.length; i++) {
     const bad = code.slice(0, i) + (code[i] === 'A' ? 'B' : 'A') + code.slice(i + 1);

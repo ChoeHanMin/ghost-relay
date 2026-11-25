@@ -186,3 +186,13 @@ input:focus, textarea:focus { border-color: var(--lime); }
 .xp-box .xp-line b { color: var(--gold); }
 .xp-box .lvup { color: var(--lime); font-weight: 900; margin-top: calc(var(--u) * 3); }
 .xp-box .mdone { color: var(--gold); margin-top: calc(var(--u) * 2); }
+
+.res-team { text-align: center; color: var(--cyan); font-weight: 800; font-size: calc(var(--u) * 7.5); margin-top: calc(var(--u) * 4); }
+.res-team:empty { display: none; }
+.rank .tm { color: var(--cyan); font-weight: 700; font-size: 0.75em; margin-left: calc(var(--u) * 2); }
+.contrib { margin-top: calc(var(--u) * 6); display: flex; flex-direction: column; gap: calc(var(--u) * 3); }
+.contrib:empty { display: none; }
+.contrib div { font-size: calc(var(--u) * 7.3); font-weight: 700; padding: calc(var(--u) * 4) calc(var(--u) * 6); border-radius: calc(var(--u) * 3); background: rgba(255,255,255,0.03); border-left: calc(var(--u) * 1.5) solid; }
+.c-gd { color: var(--gold); border-color: var(--gold); }
+.c-cy { color: var(--cyan); border-color: var(--cyan); }
+.c-lm { color: var(--lime); border-color: var(--lime); }

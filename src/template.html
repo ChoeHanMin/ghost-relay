@@ -54,6 +54,12 @@
           <button data-v="2">어려움</button>
         </div>
         <p class="muted small-p" id="diff-info"></p>
+        <div class="field-label">모드</div>
+        <div class="seg" id="seg-mode">
+          <button data-v="0" class="on">경쟁</button>
+          <button data-v="1">협동 <span class="sub">유령 발판</span></button>
+        </div>
+        <p class="muted small-p" id="mode-info"></p>
         <div class="best-line" id="setup-best"></div>
         <button class="btn primary" id="btn-setup-go">출발</button>
         <button class="btn text" id="btn-setup-cancel">취소</button>
@@ -150,9 +156,9 @@
         <div class="how"><canvas class="how-cv" id="how2" width="96" height="48"></canvas>
           <p>40초를 달리면 내 플레이가 <b>유령</b>이 되어 <b>코드</b>로 나와요. 다음 주자에게 보내거나, 결과 화면에서 <b>이 기기로 다음 주자</b>를 바로 달리게 할 수 있어요. 10명이면 <b>릴레이 완주!</b></p></div>
         <div class="how"><canvas class="how-cv" id="how3" width="96" height="48"></canvas>
-          <p>점수 = 거리(m) + 별×5 + <b class="cy">싱크</b>×3 + <b class="gd">구조</b>×10<br>
+          <p><b>개인 점수(순위)</b> = 거리(m) + 별×5<br><b>팀 점수</b> = <b class="cy">싱크</b>×3 + <b class="gd">구조</b>×10, 모든 주자가 함께 쌓아요<br>
           <b class="cy">싱크</b>: 유령과 같은 순간에 점프 · <b class="gd">구조</b>: 앞 주자 아무도 못 먹은 <b class="gd">금색 별</b> 먹기</p></div>
-        <p class="muted small-p">부딪혀도 죽지 않고 잠깐 멈칫해요. 레벨이 오르면 모자가 열리고, 매일 미션 3개가 바뀌어요.</p>
+        <p class="muted small-p">아래 길은 안전하고, 위쪽 발판 길은 어렵지만 별이 많아요. 마지막 8초에는 <b class="gd">피날레 별길</b>이 나와요. <b class="cy">협동 모드</b>에서는 앞 주자가 빠진 구덩이에 유령 발판이 남아요. 같은 맵을 다시 하면 보라색 <b>내 최고 기록 유령</b>과 겨뤄요.</p>
         <button class="btn primary" id="btn-howto-ok">알겠어요</button>
       </div>
     </section>
@@ -164,7 +170,10 @@
           <div class="res-title" id="res-title">완주!</div>
           <div class="res-sub" id="res-sub"></div>
         </div>
+        <div class="res-team" id="res-team"></div>
         <ol class="rank" id="res-rank"></ol>
+        <p class="tip">순위 = 거리 + 별(개인 점수) · 싱크·구조는 팀 점수</p>
+        <div class="contrib" id="res-contrib"></div>
         <div class="badges" id="res-badges"></div>
         <div class="xp-box hidden" id="res-xp"></div>
         <div class="slots" id="res-slots"></div>

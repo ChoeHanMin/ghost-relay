@@ -195,6 +195,16 @@ input:focus, textarea:focus { border-color: var(--lime); }
 .xp-box .lvup { color: var(--lime); font-weight: 900; margin-top: calc(var(--u) * 3); }
 .xp-box .mdone { color: var(--gold); margin-top: calc(var(--u) * 2); }
 
+.res-team { text-align: center; color: var(--cyan); font-weight: 800; font-size: calc(var(--u) * 7.5); margin-top: calc(var(--u) * 4); }
+.res-team:empty { display: none; }
+.rank .tm { color: var(--cyan); font-weight: 700; font-size: 0.75em; margin-left: calc(var(--u) * 2); }
+.contrib { margin-top: calc(var(--u) * 6); display: flex; flex-direction: column; gap: calc(var(--u) * 3); }
+.contrib:empty { display: none; }
+.contrib div { font-size: calc(var(--u) * 7.3); font-weight: 700; padding: calc(var(--u) * 4) calc(var(--u) * 6); border-radius: calc(var(--u) * 3); background: rgba(255,255,255,0.03); border-left: calc(var(--u) * 1.5) solid; }
+.c-gd { color: var(--gold); border-color: var(--gold); }
+.c-cy { color: var(--cyan); border-color: var(--cyan); }
+.c-lm { color: var(--lime); border-color: var(--lime); }
+
 </style>
 </head>
 <body>
@@ -242,6 +252,12 @@ input:focus, textarea:focus { border-color: var(--lime); }
           <button data-v="2">어려움</button>
         </div>
         <p class="muted small-p" id="diff-info"></p>
+        <div class="field-label">모드</div>
+        <div class="seg" id="seg-mode">
+          <button data-v="0" class="on">경쟁</button>
+          <button data-v="1">협동 <span class="sub">유령 발판</span></button>
+        </div>
+        <p class="muted small-p" id="mode-info"></p>
         <div class="best-line" id="setup-best"></div>
         <button class="btn primary" id="btn-setup-go">출발</button>
         <button class="btn text" id="btn-setup-cancel">취소</button>
@@ -338,9 +354,9 @@ input:focus, textarea:focus { border-color: var(--lime); }
         <div class="how"><canvas class="how-cv" id="how2" width="96" height="48"></canvas>
           <p>40초를 달리면 내 플레이가 <b>유령</b>이 되어 <b>코드</b>로 나와요. 다음 주자에게 보내거나, 결과 화면에서 <b>이 기기로 다음 주자</b>를 바로 달리게 할 수 있어요. 10명이면 <b>릴레이 완주!</b></p></div>
         <div class="how"><canvas class="how-cv" id="how3" width="96" height="48"></canvas>
-          <p>점수 = 거리(m) + 별×5 + <b class="cy">싱크</b>×3 + <b class="gd">구조</b>×10<br>
+          <p><b>개인 점수(순위)</b> = 거리(m) + 별×5<br><b>팀 점수</b> = <b class="cy">싱크</b>×3 + <b class="gd">구조</b>×10, 모든 주자가 함께 쌓아요<br>
           <b class="cy">싱크</b>: 유령과 같은 순간에 점프 · <b class="gd">구조</b>: 앞 주자 아무도 못 먹은 <b class="gd">금색 별</b> 먹기</p></div>
-        <p class="muted small-p">부딪혀도 죽지 않고 잠깐 멈칫해요. 레벨이 오르면 모자가 열리고, 매일 미션 3개가 바뀌어요.</p>
+        <p class="muted small-p">아래 길은 안전하고, 위쪽 발판 길은 어렵지만 별이 많아요. 마지막 8초에는 <b class="gd">피날레 별길</b>이 나와요. <b class="cy">협동 모드</b>에서는 앞 주자가 빠진 구덩이에 유령 발판이 남아요. 같은 맵을 다시 하면 보라색 <b>내 최고 기록 유령</b>과 겨뤄요.</p>
         <button class="btn primary" id="btn-howto-ok">알겠어요</button>
       </div>
     </section>
@@ -352,7 +368,10 @@ input:focus, textarea:focus { border-color: var(--lime); }
           <div class="res-title" id="res-title">완주!</div>
           <div class="res-sub" id="res-sub"></div>
         </div>
+        <div class="res-team" id="res-team"></div>
         <ol class="rank" id="res-rank"></ol>
+        <p class="tip">순위 = 거리 + 별(개인 점수) · 싱크·구조는 팀 점수</p>
+        <div class="contrib" id="res-contrib"></div>
         <div class="badges" id="res-badges"></div>
         <div class="xp-box hidden" id="res-xp"></div>
         <div class="slots" id="res-slots"></div>
@@ -460,7 +479,7 @@ var GR = (function () {
 
   /* ---------- 2. constants ---------- */
   var C = {
-    VERSION: 2,            // 코드 형식 + 물리값 버전 (물리값을 바꾸면 반드시 올릴 것)
+    VERSION: 3,            // 코드 형식 버전. v2 코드도 읽고, v2 맵 생성 규칙으로 재생한다
     FP: 256,               // 1px = 256 단위
     TPS: 60, RUN_TICKS: 2400,             // 40초
     GROUND_Y: 320,
@@ -487,13 +506,16 @@ var GR = (function () {
 
   /* ---------- 3. map ---------- */
   var mapCache = {};
-  function getMap(seed, diff) {
-    seed = seed >>> 0; diff = diff === undefined ? 1 : diff;
-    var key = seed + ':' + diff;
-    if (!mapCache[key]) mapCache[key] = generateMap(seed, diff);
+  function getMap(seed, diff, mapVer) {
+    seed = seed >>> 0; diff = diff === undefined ? 1 : diff; mapVer = mapVer || C.VERSION;
+    var key = seed + ':' + diff + ':' + mapVer;
+    if (!mapCache[key]) mapCache[key] = generateMap(seed, diff, mapVer);
     return mapCache[key];
   }
-  function generateMap(seed, diff) {
+  // 장애물 없이 달렸을 때 t틱에 도착하는 x(px)
+  function xAtTick(T, diff) { var x = C.START_X * FP; for (var t = 0; t < T; t++) x += speedAt(t, diff); return Math.floor(x / FP); }
+  function generateMap(seed, diff, mapVer) {
+    mapVer = mapVer || C.VERSION;
     var rng = mulberry32((seed ^ 0x9E3779B9 ^ Math.imul(diff + 1, 0x85EBCA6B)) >>> 0);
     var G = C.GROUND_Y, obs = [], stars = [], holes = [], plats = [];
     function star(x, y) { stars.push({ x: x, y: y }); }
@@ -551,6 +573,31 @@ var GR = (function () {
         var s2 = b + 16 + 170; box(s2, 32, 8, 'spike'); star(s2 + 12, G - 42);
         return s2 - x + 32 + tail();
       },
+      route: function (x) { // 위험·보상 길: 아래는 별 적고 안전, 위는 발판을 이어 타면 별이 많음
+        var b = x + 90 + rint(rng, 20), n = 2 + rint(rng, 2), px = b, i, k;
+        for (i = 0; i < n; i++) {
+          var w = 80 + rint(rng, 3) * 16, h = 46 + rint(rng, 3) * 4;
+          plats.push({ x: px, y: G - h, w: w });
+          for (k = 10; k + 8 <= w - 4; k += 28) star(px + k, G - h - 12);
+          px += w + 40 + rint(rng, 16);
+        }
+        var mid = b + ((px - b) >> 1) - 8;
+        if (rint(rng, 2)) box(mid, 16, 16, 'low'); else box(mid - 8, 32, 8, 'spike');
+        star(b + 20, G - 12);
+        return px - x + 110 + rint(rng, 30);
+      },
+      finale: function (x, end) { // 마지막 약 8초: 위쪽 별길(위험·보상) + 아래쪽 장애물
+        var px = x + 60, i = 0;
+        while (px < end) {
+          var w = 96 + rint(rng, 3) * 16, h = 48 + (i % 2) * 8;
+          plats.push({ x: px, y: G - h, w: w });
+          for (var k = 10; k + 8 <= w - 4; k += 32) star(px + k, G - h - 12);
+          var under = px + (w >> 1) - 8;
+          if (i % 2 === 0) box(under, 16, 16, 'low'); else box(under - 8, 32, 8, 'spike');
+          px += w + 52 + rint(rng, 20); i++;
+        }
+        return px - x + 80;
+      },
       holelow: function (x) {
         var b = x + 100 + rint(rng, 20), w = 36 + rint(rng, 9);
         holes.push({ x0: b, x1: b + w }); star(b + (w >> 1) - 4, G - 40);
@@ -564,9 +611,14 @@ var GR = (function () {
       [['low', 1], ['spike', 1], ['holeW', 2], ['tall', 2], ['dbl', 2], ['sign', 1], ['air', 1], ['plat', 2]],
       [['lowspike', 2], ['holelow', 2], ['dbl', 1], ['tall', 1], ['sign', 1], ['air', 2], ['holeW', 1], ['plat', 2]]
     ];
-    var th = DIFF[diff].tiers, x = 200;
+    if (mapVer >= 3) { tiers[1].push(['route', 1]); tiers[2].push(['route', 2]); tiers[3].push(['route', 2]); }
+    var th = DIFF[diff].tiers, x = 200, finaleX = -1, finaleEnd = 0, finaleAt = -1;
+    if (mapVer >= 3) { finaleX = xAtTick(C.RUN_TICKS - 8 * C.TPS - 60, diff); finaleEnd = xAtTick(C.RUN_TICKS, diff) + 200; }
     x += chunk.flat(x);
     while (x < C.MAP_LEN) {
+      if (finaleX > 0 && x >= finaleX - 120) {
+        finaleAt = x + 60; x += chunk.finale(x, finaleEnd); finaleX = -1; continue;
+      }
       var tier = x < th[0] ? 0 : x < th[1] ? 1 : x < th[2] ? 2 : 3;
       var list = tiers[tier], total = 0, i;
       for (i = 0; i < list.length; i++) total += list[i][1];
@@ -576,7 +628,8 @@ var GR = (function () {
     }
     var byXY = function (a, b) { return a.x - b.x || a.y - b.y; };
     obs.sort(byXY); stars.sort(byXY);
-    return { seed: seed, diff: diff, obs: obs, stars: stars, holes: holes, plats: plats, length: x };
+    plats.sort(function (a, b) { return a.x - b.x; });
+    return { seed: seed, diff: diff, ver: mapVer, obs: obs, stars: stars, holes: holes, plats: plats, length: x, finaleX: finaleAt };
   }
   var ADJ = ['네온', '젖은', '조용한', '반짝이는', '새벽의', '비 오는', '잠든', '깜빡이는', '안개 낀', '한밤의', '푸른', '오래된'];
   var PLACE = ['골목', '옥상', '지하철', '놀이터', '항구', '시장', '다리', '정류장', '공터', '상가', '육교', '터널'];
@@ -591,7 +644,7 @@ var GR = (function () {
       stumble: 0, fall: 0, fallTo: 0,
       obsIdx: 0, starIdx: 0, holeIdx: 0, platIdx: 0,
       hit: new Uint8Array(map.obs.length), got: new Uint8Array(map.stars.length),
-      rec: [], stars: 0, syncs: 0, rescues: 0, stumbles: 0, falls: 0, jumps: 0, doubles: 0, platLands: 0,
+      rec: [], fallHole: -1, stars: 0, syncs: 0, rescues: 0, stumbles: 0, falls: 0, jumps: 0, doubles: 0, platLands: 0,
       flags: 0, lastSync: 0, probe: false, failed: false
     };
   }
@@ -630,7 +683,7 @@ var GR = (function () {
       if (jumped) {
         run.jumps++; run.flags |= F.JUMP;
         if (run.rec) run.rec.push(t);
-        if (run.ctx && run.ctx.syncArr[t]) { run.lastSync = run.ctx.syncArr[t]; run.syncs += run.lastSync; run.flags |= F.SYNC; }
+        if (run.ctx && run.ctx.syncArr[t]) { run.lastSync = run.ctx.syncArr[t]; run.syncs++; run.flags |= F.SYNC; } // 점프 한 번에 싱크 1회
       }
     }
 
@@ -649,6 +702,7 @@ var GR = (function () {
 
       var footPx = (run.x >> 8) + 6;
       var hole = holeUnder(run, footPx), pi = platUnder(run, footPx);
+      if (hole && run.ctx && run.ctx.bridged && run.ctx.bridged[run.holeIdx]) hole = null; // 앞 주자의 유령 발판
       if (run.grounded) {
         if (run.plat >= 0) { if (pi !== run.plat) { run.grounded = false; run.vy = 0; run.plat = -1; run.dblAvail = true; } }
         else if (hole) { run.grounded = false; run.vy = 0; run.dblAvail = false; }
@@ -668,6 +722,7 @@ var GR = (function () {
           } else if (run.y >= groundTop + 4 * FP) {
             if (run.probe) { run.failed = true; run.t++; return; }
             run.fall = C.FALL_TICKS; run.fallTo = hole.x1 * FP; run.falls++;
+            if (run.fallHole < 0) run.fallHole = run.holeIdx;
             run.stumble = 0; run.dblAvail = false;
             run.flags |= F.FALL;
           }
@@ -705,19 +760,19 @@ var GR = (function () {
     run.t++;
   }
   function distanceM(run) { return Math.max(0, Math.floor((run.x - C.START_X * FP) / (C.PX_PER_M * FP))); }
-  function scoreOf(run) {
-    return distanceM(run) + run.stars * C.PTS_STAR + run.syncs * C.PTS_SYNC + run.rescues * C.PTS_RESCUE;
-  }
+  /* 개인 점수 = 거리 + 별 (순위 기준) / 팀 점수 = 싱크 + 구조 (함께 만드는 점수) */
+  function scoreOf(run) { return distanceM(run) + run.stars * C.PTS_STAR; }
+  function teamOf(run) { return run.syncs * C.PTS_SYNC + run.rescues * C.PTS_RESCUE; }
   function stateBits(run) {
     return (run.grounded ? S.GROUND : 0) | (run.stumble > 0 ? S.STUMBLE : 0) | (run.fall > 0 ? S.FALL : 0) |
       (run.vy < 0 ? S.RISING : 0) | (!run.grounded && !run.dblAvail ? S.DOUBLE : 0);
   }
   function summary(run) {
-    return { score: scoreOf(run), distance: distanceM(run), stars: run.stars, syncs: run.syncs, rescues: run.rescues,
+    return { score: scoreOf(run), team: teamOf(run), distance: distanceM(run), fallHole: run.fallHole, stars: run.stars, syncs: run.syncs, rescues: run.rescues,
       stumbles: run.stumbles, falls: run.falls, jumps: run.jumps, doubles: run.doubles, platLands: run.platLands };
   }
-  function simulate(mapOrSeed, inputs, ctx, wantFrames, diff) {
-    var map = typeof mapOrSeed === 'object' ? mapOrSeed : getMap(mapOrSeed, diff);
+  function simulate(mapOrSeed, inputs, ctx, wantFrames, diff, mapVer) {
+    var map = typeof mapOrSeed === 'object' ? mapOrSeed : getMap(mapOrSeed, diff, mapVer);
     var run = createRun(map, ctx), p = 0, N = C.RUN_TICKS, fr = null;
     if (wantFrames) {
       fr = { x: new Int32Array(N + 1), y: new Int32Array(N + 1), st: new Uint8Array(N + 1), fl: new Uint16Array(N + 1) };
@@ -733,26 +788,28 @@ var GR = (function () {
     res.rec = run.rec; res.got = run.got; res.frames = fr;
     return res;
   }
-  function emptyCtx(map) { return { syncArr: new Uint8Array(C.RUN_TICKS), priorStars: new Uint8Array(map.stars.length) }; }
-  function addToCtx(ctx, res) {
+  function emptyCtx(map) { return { syncArr: new Uint8Array(C.RUN_TICKS), priorStars: new Uint8Array(map.stars.length), bridged: new Uint8Array(map.holes.length), bridgeBy: new Int8Array(map.holes.length).fill(-1) }; }
+  function addToCtx(ctx, res, coop, idx) {
     for (var j = 0; j < res.rec.length; j++) {
       var g = res.rec[j];
       for (var d = -C.SYNC_WINDOW; d <= C.SYNC_WINDOW; d++) { var k = g + d; if (k >= 0 && k < C.RUN_TICKS && ctx.syncArr[k] < 255) ctx.syncArr[k]++; }
     }
     for (var i = 0; i < res.got.length; i++) if (res.got[i]) ctx.priorStars[i] = 1;
+    if (coop && res.fallHole >= 0 && !ctx.bridged[res.fallHole]) { ctx.bridged[res.fallHole] = 1; ctx.bridgeBy[res.fallHole] = idx; }
   }
-  function copyCtx(ctx) { return { syncArr: ctx.syncArr.slice(), priorStars: ctx.priorStars.slice() }; }
+  function copyCtx(ctx) { return { syncArr: ctx.syncArr.slice(), priorStars: ctx.priorStars.slice(), bridged: ctx.bridged.slice(), bridgeBy: ctx.bridgeBy.slice() }; }
   /* 릴레이 전체를 달린 순서대로 재생해 각 주자의 점수를 계산한다 (점수는 코드에 없다). */
   function evaluateRelay(relay, wantFrames) {
-    var map = getMap(relay.seed, relay.diff), ctx = emptyCtx(map), results = [];
+    var map = getMap(relay.seed, relay.diff, relay.ver || C.VERSION), ctx = emptyCtx(map), results = [], coop = !!relay.coop;
     for (var i = 0; i < relay.runners.length; i++) {
       var ru = relay.runners[i];
       var res = simulate(map, ru.inputs, i === 0 ? null : copyCtx(ctx), wantFrames);
       res.name = ru.name; res.hat = ru.hat; res.index = i;
       results.push(res);
-      addToCtx(ctx, res);
+      addToCtx(ctx, res, coop, i);
     }
-    return { map: map, results: results, nextCtx: relay.runners.length ? ctx : null };
+    var team = 0; results.forEach(function (r) { team += r.team; });
+    return { map: map, results: results, team: team, nextCtx: relay.runners.length ? ctx : null };
   }
   function rankOrder(results) {
     return results.slice().sort(function (a, b) { return b.score - a.score || b.distance - a.distance || a.index - b.index; });
@@ -795,8 +852,8 @@ var GR = (function () {
   }
   /* skill: 0 느림, 1 보통, 2 빠름, 3 완벽 */
   var BOT_MISTAKE = [600, 350, 150, 0];
-  function botInputs(seed, skill, diff) {
-    var map = getMap(seed, diff), run = createRun(map, null);
+  function botInputs(seed, skill, diff, mapVer) {
+    var map = getMap(seed, diff, mapVer), run = createRun(map, null);
     var rng = mulberry32(hash32((seed ^ (0xB0770000 + skill * 7919 + (map.diff << 4))) >>> 0));
     var plan = null, second = -1, mistake = BOT_MISTAKE[skill];
     while (run.t < C.RUN_TICKS) {
@@ -824,8 +881,9 @@ var GR = (function () {
   var PREFIX = 'GR2.';
   var NAME_RE = /^[가-힣A-Za-z0-9]{1,6}$/;
   function encodeRelay(r) {
-    var b = [C.VERSION, (r.seed >>> 24) & 255, (r.seed >>> 16) & 255, (r.seed >>> 8) & 255, r.seed & 255,
-      r.mapType & 255, r.diff & 255, (r.relayId >> 8) & 255, r.relayId & 255, r.runners.length];
+    var ver = r.ver || C.VERSION;
+    var b = [ver, (r.seed >>> 24) & 255, (r.seed >>> 16) & 255, (r.seed >>> 8) & 255, r.seed & 255,
+      (r.mapType & 1) | (ver >= 3 && r.coop ? 2 : 0), r.diff & 255, (r.relayId >> 8) & 255, r.relayId & 255, r.runners.length];
     for (var i = 0; i < r.runners.length; i++) {
       var ru = r.runners[i], nb = utf8Encode(ru.name);
       if (nb.length > C.NAME_MAX_BYTES) throw new Error('name too long');
@@ -872,10 +930,10 @@ var GR = (function () {
     function u8() { if (p >= end) throw 'TRUNC'; return b[p++]; }
     function vint() { var n = 0, sh = 0, x; do { x = u8(); n += (x & 127) * Math.pow(2, sh); sh += 7; if (sh > 28) throw 'BAD'; } while (x & 128); return n; }
     try {
-      if (u8() !== 2) throw 'OLD';
+      var ver = u8(); if (ver < 2) throw 'OLD';
       var seed = ((u8() << 24) | (u8() << 16) | (u8() << 8) | u8()) >>> 0;
-      var mapType = u8(), diff = u8(), relayId = (u8() << 8) | u8(), N = u8();
-      if (N < 1 || N > C.MAX_RUNNERS || mapType > 1 || diff > 2) throw 'BAD';
+      var mb = u8(), mapType = mb & 1, coop = ver >= 3 && (mb & 2) ? 1 : 0, diff = u8(), relayId = (u8() << 8) | u8(), N = u8();
+      if (N < 1 || N > C.MAX_RUNNERS || mb > (ver >= 3 ? 3 : 1) || diff > 2) throw 'BAD';
       var runners = [];
       for (var i = 0; i < N; i++) {
         var nl = u8(); if (nl < 1 || nl > C.NAME_MAX_BYTES) throw 'BAD';
@@ -891,7 +949,7 @@ var GR = (function () {
         runners.push({ name: name, hat: hat, inputs: inputs });
       }
       if (p !== end) throw 'BAD';
-      return { ok: true, relay: { seed: seed, mapType: mapType, diff: diff, relayId: relayId, runners: runners }, completed: N >= C.MAX_RUNNERS };
+      return { ok: true, relay: { ver: ver, seed: seed, mapType: mapType, coop: coop, diff: diff, relayId: relayId, runners: runners }, completed: N >= C.MAX_RUNNERS };
     } catch (e) {
       return { ok: false, error: ERR[e] || ERR.BAD };
     }
@@ -903,7 +961,7 @@ var GR = (function () {
     C: C, F: F, S: S, DIFF: DIFF,
     mulberry32: mulberry32, hash32: hash32, crc16: crc16, b64urlEncode: b64urlEncode, b64urlDecode: b64urlDecode,
     getMap: getMap, generateMap: generateMap, mapName: mapName, seedForDate: seedForDate,
-    createRun: createRun, step: step, canJump: canJump, canDouble: canDouble, speedAt: speedAt, scoreOf: scoreOf, distanceM: distanceM,
+    createRun: createRun, step: step, canJump: canJump, canDouble: canDouble, speedAt: speedAt, scoreOf: scoreOf, teamOf: teamOf, xAtTick: xAtTick, distanceM: distanceM,
     summary: summary, stateBits: stateBits, simulate: simulate, evaluateRelay: evaluateRelay, rankOrder: rankOrder,
     botInputs: botInputs, encodeRelay: encodeRelay, decodeRelay: decodeRelay, relayIdText: relayIdText, validName: validName
   };
@@ -1038,9 +1096,11 @@ if (typeof module !== 'undefined' && module.exports) module.exports = GR;
   }
   function dailySeed() { return GR.seedForDate(kstYmd()); }
   function randId() { return Math.floor(Math.random() * 65536); }
-  function mapKey(relay) { return (relay.mapType === 0 ? 'm' + relay.seed : 'free') + '_' + relay.diff; }
+  function mapKey(relay) { return (relay.mapType === 0 ? 'm' + relay.seed : 'free') + '_' + relay.diff + ((relay.ver || C.VERSION) >= 3 ? '' : '_v2'); }
+  function newRelay(seed, mapType, diff, coop) { return { ver: C.VERSION, seed: seed >>> 0, mapType: mapType, coop: coop ? 1 : 0, diff: diff, relayId: randId(), runners: [] }; }
+  function relayMap(r) { return GR.getMap(r.seed, r.diff, r.ver || C.VERSION); }
   function mapLabel(relay) {
-    return (relay.mapType === 0 ? (relay.seed === dailySeed() ? '오늘의 맵' : '날짜 맵') + ' · ' + GR.mapName(relay.seed) : '자유 맵') + ' · ' + DIFF[relay.diff].name;
+    return (relay.mapType === 0 ? (relay.seed === dailySeed() ? '오늘의 맵' : '날짜 맵') + ' · ' + GR.mapName(relay.seed) : '자유 맵') + ' · ' + DIFF[relay.diff].name + (relay.coop ? ' · 협동' : '');
   }
 
   /* ---------- 성장: 레벨 · 미션 · 모자 · 기록 ---------- */
@@ -1073,13 +1133,17 @@ if (typeof module !== 'undefined' && module.exports) module.exports = GR;
     }
     function today() { var y = kstYmd(); if (p.mis.d !== y) p.mis = { d: y, done: [] }; return p.mis; }
     function addRun(res, info) {
-      var before = lvInfo(p.xp).lv, gain = Math.max(0, res.score), done = [], st = today();
+      var before = lvInfo(p.xp).lv, gain = Math.max(0, res.score + (res.team || 0)), done = [], st = today();
       missions(st.d).forEach(function (m) {
         if (st.done.indexOf(m.id) < 0 && m.ok(res, info)) { st.done.push(m.id); gain += MISSION_XP; done.push(m.text); }
       });
       p.xp += gain; p.runs++; p.stars += res.stars; p.dist += res.distance; p.syncs += res.syncs; p.rescues += res.rescues; p.doubles += res.doubles;
       var prev = p.best[info.key] ? p.best[info.key].s : 0, newBest = res.score > prev;
-      if (newBest) p.best[info.key] = { s: res.score, label: info.label };
+      if (newBest) {
+        p.best[info.key] = { s: res.score, label: info.label, inputs: info.inputs || null };
+        var ks = Object.keys(p.best); // 오래된 유령 기록은 30개까지만
+        if (ks.length > 30) ks.sort(function (a, b) { return p.best[a].s - p.best[b].s; }).slice(0, ks.length - 30).forEach(function (k) { if (p.best[k].inputs) p.best[k].inputs = null; });
+      }
       var after = lvInfo(p.xp).lv, hats = [];
       for (var i = 0; i < 10; i++) if (hatLv(i) > before && hatLv(i) <= after) hats.push(i);
       save();
@@ -1125,7 +1189,8 @@ if (typeof module !== 'undefined' && module.exports) module.exports = GR;
     me: { B: '#C6F432', b: '#7A9A1C', F: '#1E2A0A', W: '#FFFFFF', P: '#0B0D0A', L: '#7A9A1C' },
     ghost: { B: '#7FE7FF', b: '#3FA8C8', F: '#123C48', W: '#FFFFFF', P: '#0B0D0A', L: '#3FA8C8' },
     gold: { B: '#FFD34D', b: '#C99A1E', F: '#4A3A0A', W: '#FFFFFF', P: '#0B0D0A', L: '#C99A1E' },
-    bot: { B: '#8A8F85', b: '#5E625A', F: '#2A2C28', W: '#D8DAD5', P: '#0B0D0A', L: '#5E625A' }
+    bot: { B: '#8A8F85', b: '#5E625A', F: '#2A2C28', W: '#D8DAD5', P: '#0B0D0A', L: '#5E625A' },
+    self: { B: '#C59BFF', b: '#8A5FD0', F: '#2E1A4A', W: '#FFFFFF', P: '#0B0D0A', L: '#8A5FD0' }
   };
   var STAR = ['...YY...', '..YYYY..', 'YYYYYYYY', '.YYYYYY.', '..YYYY..', '.YY..YY.', 'YY....YY', '........'];
   var sprites = {}, starSprite = null, starGold = null;
@@ -1244,6 +1309,39 @@ if (typeof module !== 'undefined' && module.exports) module.exports = GR;
       cx.fillStyle = 'rgba(255,107,107,0.35)'; cx.fillRect(sx, GY + 2, w, 1);
     }
   }
+  function drawBridges(map, camX, ctx, names) {
+    if (!ctx || !ctx.bridged) return;
+    for (var i = 0; i < map.holes.length; i++) {
+      if (!ctx.bridged[i]) continue;
+      var h = map.holes[i]; if (h.x1 < camX || h.x0 > camX + VIS.w) continue;
+      var x = Math.round(h.x0 - camX), w = h.x1 - h.x0;
+      cx.globalAlpha = 0.55 + 0.15 * Math.sin(G.time / 300);
+      cx.fillStyle = '#7FE7FF'; cx.fillRect(x - 2, GY - 1, w + 4, 3);
+      cx.fillStyle = 'rgba(127,231,255,0.25)'; cx.fillRect(x, GY + 2, w, 6);
+      cx.globalAlpha = 1;
+      var who = names && names[ctx.bridgeBy[i]];
+      if (who) krText(who + '의 발판', x + w / 2, GY + 14, 6.5, '#7FE7FF', 'center', true);
+    }
+  }
+  function drawFinale(map, camX) {
+    if (!map.finaleX || map.finaleX < 0) return;
+    var x = Math.round(map.finaleX - camX);
+    if (x < -60 || x > VIS.w + 60) return;
+    cx.fillStyle = '#3A3F35'; cx.fillRect(x + 2, GY - 92, 2, 92);
+    cx.fillStyle = '#2A220A'; cx.fillRect(x - 22, GY - 108, 50, 16);
+    var on = (Math.floor(G.time / 200) % 2) === 0;
+    cx.fillStyle = on ? '#FFD34D' : '#B8902A';
+    cx.fillRect(x - 22, GY - 108, 50, 1); cx.fillRect(x - 22, GY - 93, 50, 1);
+    pxText('FINAL', x + 3, GY - 104, 1, on ? '#FFD34D' : '#B8902A', 'center');
+  }
+  function drawMarks(marks, camX) {
+    if (!marks) return;
+    for (var i = 0; i < marks.length; i++) {
+      var x = Math.round(marks[i] - camX); if (x < -20 || x > VIS.w + 20) continue;
+      cx.fillStyle = 'rgba(197,155,255,0.8)'; cx.fillRect(x + 5, GY - 22, 2, 9); cx.fillRect(x + 5, GY - 11, 2, 2);
+      krText('지난번 꽈당', x + 6, GY - 28, 6, '#C59BFF', 'center', true);
+    }
+  }
   function drawPlats(map, camX) {
     var P = map.plats;
     for (var i = 0; i < P.length; i++) {
@@ -1320,7 +1418,17 @@ if (typeof module !== 'undefined' && module.exports) module.exports = GR;
     cx.fillText(text, Math.round(sx), sy);
   }
   function frameAt(fr, i) { i = Math.max(0, Math.min(C.RUN_TICKS, i)); return { x: fr.x[i] / FP, y: fr.y[i] / FP, st: fr.st[i] }; }
-  function ghostColor(g) { return g.kind === 'gold' ? '#FFD34D' : g.kind === 'bot' ? '#8A8F85' : '#7FE7FF'; }
+  function ghostColor(g) { return g.kind === 'gold' ? '#FFD34D' : g.kind === 'bot' ? '#8A8F85' : g.kind === 'self' ? '#C59BFF' : '#7FE7FF'; }
+  // 유령의 틱별 개인 점수(거리 + 별) — 결과와 같은 기준으로 실시간 순위를 매긴다
+  function personalTrack(fr) {
+    var a = new Int16Array(C.RUN_TICKS + 1), stars = 0;
+    for (var i = 0; i <= C.RUN_TICKS; i++) {
+      if (fr.fl[i] & F.STAR) stars++;
+      a[i] = Math.max(0, Math.floor((fr.x[i] - C.START_X * FP) / (C.PX_PER_M * FP))) + stars * C.PTS_STAR;
+    }
+    return a;
+  }
+  function liveScore(run) { return GR.scoreOf(run); }
   function drawGhosts(list, t, camX, showTags, tags) {
     for (var gi = list.length - 1; gi >= 0; gi--) {
       var g = list[gi], f = frameAt(g.frames, t), alpha = g.kind === 'bot' ? 0.45 : 0.55;
@@ -1407,8 +1515,11 @@ if (typeof module !== 'undefined' && module.exports) module.exports = GR;
     drawBackground(sc.camX, G.time, yTop, yBot);
     if (sc.speedT !== undefined) speedLines(sc.speedT, sc.camX, sc.map.diff);
     drawGround(sc.map, sc.camX, yBot);
+    drawBridges(sc.map, sc.camX, sc.bridges, sc.bridgeNames);
+    drawFinale(sc.map, sc.camX);
     drawPlats(sc.map, sc.camX);
     drawObstacles(sc.map, sc.camX, G.time);
+    drawMarks(sc.marks, sc.camX);
     if (sc.ghosts) drawGhosts(sc.ghosts, sc.t, sc.camX, sc.tags, tags);
     if (sc.others) sc.others.forEach(function (o) { drawRunner('ghost', o.hat, o.x, o.y, o.st, sc.camX, 0.3); });
     drawStars(sc.map, sc.camX, sc.got, sc.prior);
@@ -1437,13 +1548,23 @@ if (typeof module !== 'undefined' && module.exports) module.exports = GR;
   };
   var botCache = {};
   var BOT_DEF = [{ name: '연습봇 느림', skill: 0 }, { name: '연습봇 보통', skill: 1 }, { name: '연습봇 빠름', skill: 2 }];
-  function practiceBots(seed, diff) {
-    var key = seed + ':' + diff;
+  function practiceBots(seed, diff, ver) {
+    ver = ver || C.VERSION;
+    var key = seed + ':' + diff + ':' + ver;
     if (!botCache[key]) botCache[key] = BOT_DEF.map(function (b) {
-      var r = GR.simulate(seed, GR.botInputs(seed, b.skill, diff), null, true, diff);
-      return { name: b.name, hat: -1, kind: 'bot', frames: r.frames, score: r.score, distance: r.distance, isBot: true };
+      var r = GR.simulate(seed, GR.botInputs(seed, b.skill, diff, ver), null, true, diff, ver);
+      return { name: b.name, hat: -1, kind: 'bot', frames: r.frames, ps: personalTrack(r.frames), score: r.score, distance: r.distance, isBot: true };
     });
     return botCache[key];
+  }
+  // 이 맵·난이도에서 내 최고 기록이 있으면 그 기록의 유령을 만든다
+  function selfGhost(base) {
+    var b = Prog.p.best[mapKey(base)];
+    if (!b || !b.inputs || !b.inputs.length) return null;
+    var r = GR.simulate(relayMap(base), b.inputs, null, true);
+    var marks = [];
+    for (var i = 1; i <= C.RUN_TICKS; i++) if (r.frames.fl[i] & (F.STUMBLE | F.FALL)) marks.push(r.frames.x[i] / FP);
+    return { name: '내 최고 ' + r.score, hat: myHat(), kind: 'self', frames: r.frames, ps: personalTrack(r.frames), score: r.score, distance: r.distance, isBot: true, isSelf: true, marks: marks };
   }
   function setupDemo() {
     var seed = dailySeed();
@@ -1500,12 +1621,12 @@ if (typeof module !== 'undefined' && module.exports) module.exports = GR;
     var x0 = Math.floor((W - gap * (n - 1) - 12) / 2);
     for (var i = 0; i < n; i++) {
       var hop = Math.max(0, Math.sin(G.time / 140 - i * 0.6)) * 10;
-      var kind = G.result.mineIdx === i ? 'me' : (G.result.leader === i ? 'gold' : 'ghost');
+      var kind = (G.result.mineIdx === i || G.result.multi) ? 'me' : (G.result.leader === i ? 'gold' : 'ghost');
       cx.globalAlpha = kind === 'me' ? 1 : 0.85;
       cx.drawImage(getSprite(kind, rs[i].hat, hop > 1 ? 'jump' : 'run' + ((G.frameNo >> 3) + i) % 4), x0 + i * gap, Math.round(46 - hop));
     }
     cx.globalAlpha = 1;
-    pxText('RELAY COMPLETE!', W / 2, 16, 2, '#FFD34D', 'center');
+    pxText(n >= 10 ? 'RELAY COMPLETE!' : n + ' RUNNERS!', W / 2, 16, 2, '#FFD34D', 'center');
     cx.fillStyle = '#4C5E22'; cx.fillRect(x0 - 8, 62, gap * (n - 1) + 28, 1);
   }
 
@@ -1532,17 +1653,23 @@ if (typeof module !== 'undefined' && module.exports) module.exports = GR;
       run = G.run; t = run.t; camX = run.x / FP - L.PSX;
       var live = G.mode !== 'result';
       drawScene({ map: G.map, camX: camX, gsy: L.GSY, t: t, speedT: t, ghosts: G.ghosts, tags: live, got: run.got, prior: G.prior, fx: G.fx,
+        bridges: G.ctx, bridgeNames: G.base.runners.map(function (r) { return r.name; }), marks: G.self ? G.self.marks : null,
         me: { x: run.x / FP, y: run.y / FP, st: GR.stateBits(run), hat: G.myHat, name: G.runName } });
       screenMode();
       if (live) {
-        var dots = ghostDots(G.ghosts, t), ahead = 0;
+        var dots = ghostDots(G.ghosts, t), ahead = 0, my = liveScore(run);
         dots.push({ x: run.x, c: '#C6F432' });
-        for (var i = 0; i < G.ghosts.length; i++) if (G.ghosts[i].frames.x[t] > run.x) ahead++;
-        drawHUD(t, GR.scoreOf(run), G.ghosts.length ? (ahead + 1) + '/' + (G.ghosts.length + 1) : '', dots);
+        for (var i = 0; i < G.ghosts.length; i++) if (G.ghosts[i].ps[t] > my) ahead++;
+        drawHUD(t, my, G.ghosts.length ? (ahead + 1) + '/' + (G.ghosts.length + 1) : '', dots);
+        if (G.self) {
+          var dlt = my - G.self.ps[t];
+          krText('내 최고 기록보다 ' + (dlt >= 0 ? '+' : '') + dlt + '점', L.W - 10, 58, 8, dlt >= 0 ? '#C6F432' : '#C59BFF', 'right', true);
+        }
+        if (G.base.runners.length) krText('팀 점수 ' + (G.teamBase + GR.teamOf(run)), 10, 58, 8, '#7FE7FF', 'left', true);
       }
-      if (G.mode === 'countdown') drawCountdown('탭: 점프 · 공중에서 한 번 더: 2단 점프', '주자 ' + (G.base.runners.length + 1) + ' / 10 · ' + mapLabel(G.base));
+      if (G.mode === 'countdown') drawCountdown(G.base.coop && G.base.runners.length ? '협동: 앞 주자가 빠진 구덩이엔 유령 발판이 있어요' : G.self ? '보라색 유령 = 내 최고 기록. 이겨 보세요!' : '탭: 점프 · 공중에서 한 번 더: 2단 점프', '주자 ' + (G.base.runners.length + 1) + ' / 10 · ' + mapLabel(G.base));
       if (G.mode === 'result' || G.mode === 'void') { cx.fillStyle = 'rgba(11,13,10,0.5)'; cx.fillRect(0, 0, L.W, L.H); }
-      if (G.mode === 'result' && G.result && G.result.completed) drawParade();
+      if (G.mode === 'result' && G.result && G.result.milestone) drawParade();
     } else if (G.view === 'game' && G.kind === 'multi' && G.multi) {
       renderMulti(dt);
     } else if (G.view === 'watch' && G.watch) {
@@ -1552,7 +1679,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = GR;
       if (G.mode === 'watch') {
         drawHUD(t, null, '', ghostDots(wv.ghosts, t));
         krText('완주 기록 다시보기 ' + GR.relayIdText(wv.relay.relayId), L.W / 2, 62, 8, '#7FE7FF', 'center', true);
-      } else { cx.fillStyle = 'rgba(11,13,10,0.5)'; cx.fillRect(0, 0, L.W, L.H); drawParade(); }
+      } else { cx.fillStyle = 'rgba(11,13,10,0.5)'; cx.fillRect(0, 0, L.W, L.H); if (G.result && G.result.milestone) drawParade(); }
     } else {
       cx.fillStyle = '#0B0D0A'; cx.fillRect(0, 0, L.W, L.H);
     }
@@ -1694,7 +1821,10 @@ if (typeof module !== 'undefined' && module.exports) module.exports = GR;
     var d = DIFF[df];
     $('diff-info').textContent = d.name + ': 속도 ' + (d.s0 / 256).toFixed(1) + '→' + (d.s1 / 256).toFixed(1) + (df === 0 ? ' · 장애물 적음' : df === 2 ? ' · 연속 장애물이 빨리 나와요' : ' · 기본');
     var key = mapKey({ mapType: mt, seed: seed, diff: df }), b = Prog.p.best[key];
-    $('setup-best').textContent = b ? '이 맵·난이도 내 최고 점수: ' + b.s + '점' : '아직 기록 없음 — 첫 기록을 만들어 보세요!';
+    $('setup-best').textContent = b ? '이 맵·난이도 내 최고 점수: ' + b.s + '점' + (mt === 0 && b.inputs ? ' — 보라색 「내 최고」 유령과 재대결해요' : '') : '아직 기록 없음 — 첫 기록을 만들어 보세요!';
+    $('mode-info').textContent = segValue('seg-mode') === 1
+      ? '협동: 앞 주자가 빠진 구덩이에 그 주자의 유령 발판이 남아요(주자당 한 곳). 다음 사람은 밟고 지나가요. 순위보다 팀 점수가 중요해요.'
+      : '경쟁: 순위는 거리 + 별(개인 점수). 싱크·구조는 모두 함께 쌓는 팀 점수예요.';
   }
 
   /* ---------- 친구 코드 ---------- */
@@ -1715,7 +1845,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = GR;
     var relay = res.relay, ev = GR.evaluateRelay(relay, false), order = GR.rankOrder(ev.results);
     pv.textContent = '';
     pv.appendChild(el('div', 'pv-head', '릴레이 ' + GR.relayIdText(relay.relayId) + ' · 주자 ' + relay.runners.length + '명 / 10'));
-    pv.appendChild(el('div', 'pv-map', mapLabel(relay)));
+    pv.appendChild(el('div', 'pv-map', mapLabel(relay) + ' · 팀 점수 ' + ev.team + (relay.coop ? ' · 앞 주자가 빠진 구덩이엔 유령 발판이 있어요' : '')));
     var ul = el('ul', 'pv-list');
     ev.results.forEach(function (r) {
       var li = el('li'), nm = el('span', 'nm');
@@ -1763,18 +1893,22 @@ if (typeof module !== 'undefined' && module.exports) module.exports = GR;
   function beginAttempt(base, runName, joined) {
     G.kind = 'solo'; G.base = base; G.runName = runName; G.joined = !!joined;
     G.myHat = runName === G.name ? myHat() : (base.runners.length + 3) % 10;
-    G.map = GR.getMap(base.seed, base.diff); G.ctx = null; G.prior = null;
+    G.map = relayMap(base); G.ctx = null; G.prior = null; G.self = null; G.teamBase = 0; G.bridgeSeen = {};
     if (base.runners.length === 0) {
-      G.ghosts = practiceBots(base.seed, base.diff);
+      G.ghosts = practiceBots(base.seed, base.diff, base.ver);
+      if (runName === G.name) {
+        G.self = selfGhost(base);
+        if (G.self) G.ghosts = [G.self].concat(G.ghosts.slice(1));
+      }
     } else {
       var ev = GR.evaluateRelay(base, true), leader = GR.rankOrder(ev.results)[0].index;
-      G.ctx = ev.nextCtx; G.prior = ev.nextCtx.priorStars;
-      G.ghosts = ev.results.map(function (r) { return { name: r.name, hat: r.hat, kind: r.index === leader ? 'gold' : 'ghost', frames: r.frames, score: r.score }; });
+      G.ctx = ev.nextCtx; G.prior = ev.nextCtx.priorStars; G.teamBase = ev.team;
+      G.ghosts = ev.results.map(function (r) { return { name: r.name, hat: r.hat, kind: r.index === leader ? 'gold' : 'ghost', frames: r.frames, ps: personalTrack(r.frames), score: r.score }; });
     }
     G.maxX = 6000 * FP;
     G.ghosts.forEach(function (g) { G.maxX = Math.max(G.maxX, g.frames.x[C.RUN_TICKS]); });
     G.run = GR.createRun(G.map, G.ctx);
-    G.fx = makeFx(); tagRows = {};
+    G.fx = makeFx(); tagRows = {}; G.finaleShown = false;
     G.mode = 'countdown'; G.view = 'game'; G.cdStart = performance.now(); G.cdPhase = -1;
     resetInput(); show(null);
   }
@@ -1793,6 +1927,17 @@ if (typeof module !== 'undefined' && module.exports) module.exports = GR;
     input.pending = false;
     GR.step(run, press);
     fxForRun(G.fx, run, true);
+    var fpx = run.x / FP;
+    if (G.map.finaleX > 0 && !G.finaleShown && fpx + 160 >= G.map.finaleX) { G.finaleShown = true; Sound.sfx('rescue'); popup(G.fx, fpx + 90, run.y / FP - 40, '피날레 별길! 위로 갈까?', '#FFD34D', true); }
+    if (G.ctx && G.ctx.bridged && run.grounded) {
+      var hs = G.map.holes, foot = fpx + 6;
+      for (var hi = Math.max(0, run.holeIdx - 1); hi < Math.min(hs.length, run.holeIdx + 2); hi++) {
+        if (G.ctx.bridged[hi] && !G.bridgeSeen[hi] && foot >= hs[hi].x0 && foot < hs[hi].x1) {
+          G.bridgeSeen[hi] = 1; Sound.sfx('plat');
+          popup(G.fx, fpx + 6, run.y / FP - 16, G.base.runners[G.ctx.bridgeBy[hi]].name + ' 발판 덕분에 통과!', '#7FE7FF', true);
+        }
+      }
+    }
     if (run.t >= C.RUN_TICKS - 300 && run.t < C.RUN_TICKS && run.t % 60 === 0) Sound.sfx('tick');
     var camX = run.x / FP - L.PSX;
     for (var i = 0; i < G.ghosts.length; i++) ghostFx(G.ghosts[i], run.t, camX);
@@ -1808,17 +1953,17 @@ if (typeof module !== 'undefined' && module.exports) module.exports = GR;
   }
   function finishRun() {
     var base = G.base, rec = G.run.rec.slice();
-    var relay = { seed: base.seed, mapType: base.mapType, diff: base.diff, relayId: base.relayId, runners: base.runners.concat([{ name: G.runName, hat: G.myHat, inputs: rec }]) };
+    var relay = { ver: base.ver || C.VERSION, seed: base.seed, mapType: base.mapType, coop: base.coop ? 1 : 0, diff: base.diff, relayId: base.relayId, runners: base.runners.concat([{ name: G.runName, hat: G.myHat, inputs: rec }]) };
     var ev = GR.evaluateRelay(relay, false), mine = ev.results[ev.results.length - 1];
     if (mine.score !== GR.scoreOf(G.run)) console.warn('[ghost-relay] 재생 점수 불일치', mine.score, GR.scoreOf(G.run));
     var order = GR.rankOrder(ev.results), code = GR.encodeRelay(relay);
     var owner = G.runName === G.name, xp = null;
-    if (owner) xp = Prog.addRun(mine, { joined: G.joined, diff: relay.diff, key: mapKey(relay), label: mapLabel(relay) });
+    if (owner) xp = Prog.addRun(mine, { joined: G.joined, diff: relay.diff, key: mapKey(relay), label: mapLabel(relay), inputs: rec });
     Prog.addHist({ code: code, id: relay.relayId, seed: relay.seed, n: relay.runners.length, score: mine.score, label: (owner ? '' : G.runName + ' · ') + mapLabel(relay), date: kstYmd() });
     G.result = {
       relay: relay, ev: ev, mine: mine, mineIdx: relay.runners.length - 1, leader: order[0].index, xp: xp, owner: owner,
       completed: relay.runners.length >= C.MAX_RUNNERS, code: code, watch: false, multi: false,
-      bots: base.runners.length === 0 ? G.ghosts : [],
+      bots: base.runners.length === 0 ? G.ghosts : [], solo: base.runners.length === 0, self: G.self,
       prevBest: G.ghosts.filter(function (g) { return !g.isBot; }).reduce(function (m, g) { return Math.max(m, g.score); }, -1)
     };
     Sound.sfx(G.result.completed ? 'win' : 'go');
@@ -1859,11 +2004,11 @@ if (typeof module !== 'undefined' && module.exports) module.exports = GR;
     startMulti({ names: names, mapType: mt, seed: mt === 0 ? dailySeed() : (Math.random() * 4294967296) >>> 0, diff: segValue('seg-mdiff'), relayId: randId() });
   }
   function startMulti(cfg) {
-    var map = GR.getMap(cfg.seed, cfg.diff);
+    var map = GR.getMap(cfg.seed, cfg.diff, C.VERSION);
     G.kind = 'multi'; G.view = 'game';
     G.multi = {
       cfg: cfg, map: map,
-      relay: { seed: cfg.seed, mapType: cfg.mapType, diff: cfg.diff, relayId: cfg.relayId, runners: [] },
+      relay: { ver: C.VERSION, seed: cfg.seed, mapType: cfg.mapType, coop: 0, diff: cfg.diff, relayId: cfg.relayId, runners: [] },
       players: cfg.names.map(function (nm, i) { return { name: nm, hat: (nm === G.name ? myHat() : [0, 1, 3, 5][i]), run: GR.createRun(map, null), fx: makeFx() }; })
     };
     G.mode = 'countdown'; G.cdStart = performance.now(); G.cdPhase = -1;
@@ -1887,7 +2032,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = GR;
     var ev = GR.evaluateRelay(relay, false), order = GR.rankOrder(ev.results), code = GR.encodeRelay(relay);
     var ownerIdx = M.players.findIndex(function (p) { return p.name === G.name; }), xp = null;
     if (ownerIdx >= 0) {
-      xp = Prog.addRun(ev.results[ownerIdx], { joined: false, diff: relay.diff, key: mapKey(relay), label: mapLabel(relay) });
+      xp = Prog.addRun(ev.results[ownerIdx], { joined: false, diff: relay.diff, key: mapKey(relay), label: mapLabel(relay), inputs: relay.runners[ownerIdx].inputs });
     }
     Prog.addHist({ code: code, id: relay.relayId, seed: relay.seed, n: relay.runners.length, score: order[0].score, label: '같이 달리기 · ' + mapLabel(relay), date: kstYmd() });
     G.result = { relay: relay, ev: ev, mine: ownerIdx >= 0 ? ev.results[ownerIdx] : null, mineIdx: ownerIdx, leader: order[0].index, xp: xp, owner: ownerIdx >= 0,
@@ -1900,7 +2045,8 @@ if (typeof module !== 'undefined' && module.exports) module.exports = GR;
   function showResult() {
     var R = G.result, relay = R.relay, n = relay.runners.length, order = GR.rankOrder(R.ev.results);
     G.mode = 'result';
-    $('scr-result').classList.toggle('complete', R.completed);
+    R.milestone = [3, 5, 10].indexOf(n) >= 0;
+    $('scr-result').classList.toggle('complete', R.milestone);
     if (R.multi) {
       $('res-title').textContent = order[0].name + ' 우승!';
       $('res-sub').textContent = n + '명 같이 달리기 · ' + mapLabel(relay);
@@ -1908,7 +2054,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = GR;
       $('res-title').textContent = '완주 기록';
       $('res-sub').textContent = GR.relayIdText(relay.relayId) + ' · ' + mapLabel(relay) + ' · 10명';
     } else {
-      $('res-title').textContent = R.completed ? '릴레이 완주!' : '완주!';
+      $('res-title').textContent = R.completed ? '릴레이 완주!' : R.milestone ? n + '명 릴레이 달성!' : '완주!';
       $('res-sub').textContent = R.mine.name + ' ' + R.mine.score + '점 · 릴레이 ' + n + ' / 10 · ' + GR.relayIdText(relay.relayId);
     }
     var rank = $('res-rank'); rank.textContent = '';
@@ -1927,10 +2073,26 @@ if (typeof module !== 'undefined' && module.exports) module.exports = GR;
       var nm = el('span', 'nm', R.multi ? pLabel(r.index, r.name) : r.name);
       if (isNew) nm.appendChild(el('span', 'tag new', 'NEW'));
       if (row.bot) nm.appendChild(el('span', 'tag bot', 'BOT'));
-      li.appendChild(nm); li.appendChild(el('span', 'sc', r.score + '점'));
+      var sc = el('span', 'sc', r.score + '점');
+      if (!row.bot && r.team) sc.appendChild(el('small', 'tm', ' 팀+' + r.team));
+      li.appendChild(nm); li.appendChild(sc);
       rank.appendChild(li);
     });
     var bd = $('res-badges'); bd.textContent = '';
+    var team = R.ev.team, cb = $('res-contrib'); cb.textContent = '';
+    $('res-team').textContent = n > 1 || R.multi ? '팀 점수 ' + team + ' — 싱크·구조로 모두 함께 쌓은 점수' : '';
+    if (!R.watch && R.mine) {
+      var me2 = R.mine, lines = [];
+      if (me2.rescues) lines.push(['gd', '친구들이 놓친 별 ' + me2.rescues + '개를 구조했어요 → 팀 +' + me2.rescues * C.PTS_RESCUE]);
+      if (me2.syncs) lines.push(['cy', '유령과 ' + me2.syncs + '번 같이 점프(싱크) → 팀 +' + me2.syncs * C.PTS_SYNC]);
+      if (relay.coop && me2.fallHole >= 0) lines.push(['cy', '내가 빠진 구덩이에 유령 발판을 남겼어요. 다음 주자는 거기서 안 빠져요']);
+      if (relay.coop && G.bridgeSeen && Object.keys(G.bridgeSeen).length && !R.multi) lines.push(['cy', '앞 주자의 유령 발판 ' + Object.keys(G.bridgeSeen).length + '개 덕분에 살았어요']);
+      if (R.self && me2.score < R.self.score) {
+        var gap = R.self.score - me2.score;
+        lines.push(['lm', gap <= 15 ? '별 ' + Math.ceil(gap / C.PTS_STAR) + '개만 더 먹었으면 최고 기록!' : '내 최고 기록까지 ' + gap + '점']);
+      } else if (R.self) lines.push(['lm', '내 최고 기록 유령을 이겼어요! (+' + (me2.score - R.self.score) + '점)']);
+      lines.forEach(function (l) { cb.appendChild(el('div', 'c-' + l[0], l[1])); });
+    }
     if (!R.watch && R.mine) {
       var m = R.mine;
       if (m.syncs) bd.appendChild(el('span', 'b-sync', '싱크 ' + m.syncs + '회'));
@@ -1960,14 +2122,18 @@ if (typeof module !== 'undefined' && module.exports) module.exports = GR;
     $('res-code-tip').classList.toggle('hidden', R.completed);
     $('btn-share').classList.toggle('hidden', !navigator.share);
     $('btn-retry').classList.toggle('hidden', R.watch);
-    $('btn-retry').textContent = R.multi ? '같은 멤버로 다시 달리기' : '다시 달리기 (내 기록 바꾸기)';
+    var soloFirst = R.solo && !R.multi && !R.watch, card = $('result-card'), rb = $('btn-retry');
+    rb.textContent = R.multi ? '같은 멤버로 다시 달리기' : soloFirst ? '다시 도전' : '다시 달리기 (내 기록 바꾸기)';
+    rb.classList.toggle('primary', soloFirst); rb.classList.toggle('outline', !soloFirst);
+    $('btn-next').classList.toggle('primary', !soloFirst); $('btn-next').classList.toggle('outline', soloFirst);
+    card.insertBefore(rb, soloFirst ? $('res-team') : $('btn-res-newsame')); // 혼자 하던 판이면 '다시 도전'을 맨 위로
     $('btn-res-newsame').classList.toggle('hidden', !R.completed);
     show('result');
     $('result-card').scrollTop = 0;
   }
   function shareText() {
     var R = G.result, id = GR.relayIdText(R.relay.relayId), n = R.relay.runners.length, how = "saaskr 게임에서 '고스트 릴레이' 검색 → 친구 코드 넣기";
-    var who = R.mine ? R.mine.name + ' ' + R.mine.score + '점' : GR.rankOrder(R.ev.results)[0].name + ' 1등';
+    var who = (R.mine ? R.mine.name + ' ' + R.mine.score + '점' : GR.rankOrder(R.ev.results)[0].name + ' 1등') + (R.ev.team ? ', 팀 점수 ' + R.ev.team : '');
     var head = R.completed ? '👻 고스트 릴레이 ' + id + ' — 10명 릴레이 완주! ' + who
       : '👻 고스트 릴레이 ' + id + ' — ' + who + ', ' + n + '/10번째 주자까지 달렸어! (' + DIFF[R.relay.diff].name + ')';
     var line = (R.completed ? '완주 기록 다시보기: ' : '다음 주자는 너! 우리 유령 이길 수 있어? ') + (GAME_URL ? '아래 주소에서 「친구 코드 넣기」' : how);
@@ -1983,14 +2149,14 @@ if (typeof module !== 'undefined' && module.exports) module.exports = GR;
   }
   function startWatch(relay) {
     var ev = GR.evaluateRelay(relay, true), order = GR.rankOrder(ev.results), leader = order[0].index;
-    G.watch = { relay: relay, map: ev.map, ev: ev, ghosts: ev.results.map(function (r) { return { name: r.name, hat: r.hat, kind: r.index === leader ? 'gold' : 'ghost', frames: r.frames, score: r.score }; }) };
+    G.watch = { relay: relay, map: ev.map, ev: ev, ghosts: ev.results.map(function (r) { return { name: r.name, hat: r.hat, kind: r.index === leader ? 'gold' : 'ghost', frames: r.frames, ps: personalTrack(r.frames), score: r.score }; }) };
     G.result = { relay: relay, ev: ev, mine: null, mineIdx: -1, leader: leader, completed: true, code: GR.encodeRelay(relay), watch: true, multi: false, bots: [], prevBest: -1, xp: null };
     G.maxX = 6000 * FP; G.watch.ghosts.forEach(function (g) { G.maxX = Math.max(G.maxX, g.frames.x[C.RUN_TICKS]); });
     G.watchT = 0; G.mode = 'watch'; G.view = 'watch'; G.kind = 'solo'; G.fx = makeFx(); tagRows = {};
     show(null);
   }
   function newSameMap(relay) {
-    ensureName(function () { attempt({ seed: relay.seed, mapType: relay.mapType, diff: relay.diff, relayId: randId(), runners: [] }, G.name, false); });
+    ensureName(function () { var r = newRelay(relay.seed, relay.mapType, relay.diff, relay.coop); r.ver = relay.ver || C.VERSION; attempt(r, G.name, false); });
   }
 
   /* ---------- 내 기록 ---------- */
@@ -2066,11 +2232,12 @@ if (typeof module !== 'undefined' && module.exports) module.exports = GR;
   /* ---------- 이벤트 ---------- */
   function on(id, fn) { $(id).addEventListener('click', function (e) { Sound.unlock(); Sound.sfx('ui'); fn(e); }); }
   on('btn-new', openSetup);
-  segBind('seg-map', refreshSetup); segBind('seg-diff', refreshSetup);
+  segBind('seg-map', refreshSetup); segBind('seg-diff', refreshSetup); segBind('seg-mode', refreshSetup);
   on('btn-setup-go', function () {
     var mt = segValue('seg-map'), df = segValue('seg-diff');
     store.set('diff', df);
-    ensureName(function () { attempt({ seed: mt === 0 ? dailySeed() : (Math.random() * 4294967296) >>> 0, mapType: mt, diff: df, relayId: randId(), runners: [] }, G.name, false); }, openSetup);
+    var md = segValue('seg-mode');
+    ensureName(function () { attempt(newRelay(mt === 0 ? dailySeed() : (Math.random() * 4294967296) >>> 0, mt, df, md), G.name, false); }, openSetup);
   });
   on('btn-setup-cancel', enterTitle);
   on('btn-code', function () { openCode(''); });
@@ -2200,10 +2367,10 @@ if (typeof module !== 'undefined' && module.exports) module.exports = GR;
     function ok(name, cond) { out.push((cond ? 'ok   ' : 'FAIL ') + name); }
     var inp = GR.botInputs(seed, 1, 1), a = GR.simulate(seed, inp, null, false, 1), b = GR.simulate(seed, inp, null, false, 1);
     ok('결정적 재생', a.score === b.score && a.distance === b.distance);
-    var run = GR.createRun(GR.getMap(seed, 2), null);
+    var run = GR.createRun(GR.getMap(seed, 2, C.VERSION), null);
     while (run.t < C.RUN_TICKS) GR.step(run, rng() % 12 === 0);
-    ok('실플레이 → 재생 일치', GR.simulate(seed, run.rec, null, false, 2).score === GR.scoreOf(run));
-    var relay = { seed: seed, mapType: 0, diff: 1, relayId: 0xA7F2, runners: [{ name: '테스트', hat: 1, inputs: inp }] };
+    ok('실플레이 → 재생 일치', GR.simulate(seed, run.rec, null, false, 2, C.VERSION).score === GR.scoreOf(run));
+    var relay = { ver: C.VERSION, seed: seed, mapType: 0, coop: 0, diff: 1, relayId: 0xA7F2, runners: [{ name: '테스트', hat: 1, inputs: inp }] };
     var dec = GR.decodeRelay(GR.encodeRelay(relay));
     ok('코드 왕복', dec.ok && JSON.stringify(dec.relay) === JSON.stringify(relay));
     ok('변조 거절', !GR.decodeRelay(GR.encodeRelay(relay).slice(0, -3)).ok);
